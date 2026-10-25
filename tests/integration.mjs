@@ -41,6 +41,7 @@ const a = client(),
   worker = client(),
   scoped = client();
 const device = "device-" + randomUUID();
+const workerDevice = "worker-device-" + randomUUID();
 let r = await a.request("/auth/signup", {
   company: "شركة الاختبار ألف",
   name: "مدير ألف",
@@ -112,7 +113,7 @@ const member = r.data.id;
 r = await worker.request("/auth/login", {
   phone: "+963" + stamp + "3",
   pin: secret,
-  device,
+  device: workerDevice,
 });
 check(r.status === 200, "worker login");
 let wm = (await worker.request("/auth/me")).data;
@@ -171,6 +172,99 @@ r = await a.request("/notifications");
 check(r.data.items.length >= 2, "manager notification inbox populated");
 r = await b.request("/notifications");
 check(r.data.items.length === 0, "other company receives no notification");
+
+const interrupted = {
+  ...operation,
+  id: randomUUID(),
+  deviceTime: Date.now(),
+  offline: false,
+};
+r = await worker.request("/attendance/sync", interrupted);
+check(
+  r.status === 200 && r.data.status === "review",
+  "unconfirmed online payload is held for review on retry without mutation",
+);
+r = await a.request("/attendance/reviews/" + interrupted.id, {
+  decision: "reject",
+  reason: "Synthetic interruption case",
+});
+check(r.status === 200, "interrupted request can be resolved");
+const offlineIn = {
+  ...operation,
+  id: randomUUID(),
+  deviceTime: Date.now(),
+  offline: true,
+};
+r = await worker.request("/attendance/sync", offlineIn);
+check(r.data.status === "review", "offline event is held for review");
+r = await worker.request("/attendance/reviews");
+check(r.status === 403, "worker cannot review attendance");
+r = await b.request("/attendance/reviews/" + offlineIn.id, {
+  decision: "approve",
+  reason: "Other company attempt",
+});
+check(r.status === 404, "cross tenant review rejected");
+r = await a.request("/attendance/reviews");
+check(
+  r.status === 200 && r.data.items.some((x) => x.id === offlineIn.id),
+  "manager sees scoped pending review",
+);
+r = await a.request("/attendance/reviews/" + offlineIn.id, {
+  decision: "approve",
+  reason: "Verified the arrival with branch manager",
+});
+check(
+  r.status === 200 && r.data.status === "accepted",
+  "manager approves offline arrival",
+);
+r = await a.request("/attendance/reviews/" + offlineIn.id, {
+  decision: "reject",
+  reason: "Duplicate decision attempt",
+});
+check(r.status === 409, "review cannot be decided twice");
+r = await worker.request("/attendance/sync", offlineIn);
+check(
+  r.data.status === "accepted",
+  "worker replay receives final review decision",
+);
+const offlineOut = {
+  ...offlineIn,
+  id: randomUUID(),
+  action: "out",
+  deviceTime: Date.now(),
+};
+await worker.request("/attendance/sync", offlineOut);
+r = await a.request("/attendance/reviews/" + offlineOut.id, {
+  decision: "approve",
+  reason: "Verified departure with the branch",
+});
+check(r.status === 200, "offline departure closes approved arrival");
+const overlap = {
+  ...offlineIn,
+  id: randomUUID(),
+  deviceTime: operation.deviceTime,
+};
+await worker.request("/attendance/sync", overlap);
+r = await a.request("/attendance/reviews/" + overlap.id, {
+  decision: "approve",
+  reason: "Attempt to overlap prior attendance",
+});
+check(r.status === 409, "overlapping review rolls back");
+r = await a.request("/attendance/reviews/" + overlap.id, {
+  decision: "reject",
+  reason: "Duplicate of existing attendance",
+});
+check(
+  r.status === 200 && r.data.status === "error",
+  "failed approval leaves review available for rejection",
+);
+r = await a.request("/audit");
+check(
+  r.data.items.filter(
+    (x) => x.target === offlineIn.id && x.action === "attendance.approve",
+  ).length === 1,
+  "one audit for review decision",
+);
 r = await b.request("/members", {
   name: "عامل تجريبي",
   phone: "+963" + stamp + "3",
@@ -183,8 +277,80 @@ check(
   "existing identity receives invitation",
 );
 const invited = r.data.id;
+const subscription = {
+  endpoint: "https://fcm.googleapis.com/test-" + randomUUID(),
+  keys: { p256dh: "a".repeat(80), auth: "b".repeat(24) },
+};
+r = await worker.request("/push/subscribe", subscription);
+check(r.status === 200, "push registration in first membership");
+
 r = await worker.request("/auth/accept-invitation", { membershipId: invited });
 check(r.status === 200, "identity owner accepts invitation");
+await worker.request("/auth/select", { membershipId: invited });
+await worker.request("/auth/me");
+r = await worker.request("/push/subscribe", subscription);
+check(
+  r.status === 200,
+  "same identity subscribes across companies on one endpoint",
+);
+r = await b.request("/push/subscribe", subscription);
+check(r.status === 409, "another identity cannot claim the push endpoint");
+
+const outsideBranch = await a.request("/branches", {
+  name: "Other branch",
+  lat: 34,
+  lng: 36,
+  radius: 150,
+});
+const outsideWorker = await a.request("/members", {
+  name: "Outside worker",
+  phone: "+963" + stamp + "5",
+  pin: secret,
+  role: "worker",
+  branchId: outsideBranch.data.id,
+});
+const scopedManager = await a.request("/members", {
+  name: "Branch manager",
+  phone: "+963" + stamp + "4",
+  pin: secret,
+  role: "manager",
+  branchId: ba.data.id,
+});
+check(scopedManager.status === 201, "create branch manager");
+const manager = client();
+await manager.request("/auth/login", {
+  phone: "+963" + stamp + "4",
+  pin: secret,
+  device: "manager-device-" + randomUUID(),
+});
+await manager.request("/auth/me");
+await manager.request("/auth/pin", {
+  currentPin: secret,
+  newPin: secret + "manager",
+});
+await manager.request("/auth/me");
+r = await manager.request("/members");
+check(
+  r.status === 200 &&
+    !r.data.items.some((x) => x.id === outsideWorker.data.id) &&
+    r.data.items.some((x) => x.id === member),
+  "manager listing respects branch scope",
+);
+r = await manager.request("/members/" + outsideWorker.data.id + "/reset", {
+  pin: secret + "denied",
+  reason: "Outside scope attempt",
+});
+check(r.status === 403, "manager cannot reset outside scope");
+r = await manager.request("/members/" + am.member.id + "/reset", {
+  pin: secret + "denied",
+  reason: "Escalation attempt",
+});
+check(r.status === 403, "manager cannot reset general manager");
+r = await manager.request("/members/" + member + "/reset", {
+  pin: secret + "managed",
+  reason: "Authorized scoped recovery",
+});
+check(r.status === 200, "manager can reset own worker");
 r = await a.request("/members/" + member + "/reset", {
   pin: secret + "local",
   reason: "Manual manager recovery",
@@ -194,7 +360,7 @@ r = await scoped.request("/auth/login", {
   phone: "+963" + stamp + "3",
   pin: secret + "local",
   companyId: am.company.id,
-  device,
+  device: workerDevice,
 });
 check(r.status === 200, "scoped recovery login");
 await scoped.request("/auth/me");
@@ -212,7 +378,7 @@ check(
   (await a.request("/audit")).data.items.some((x) => x.action === "pin.reset"),
   "reset audit recorded",
 );
-mkdirSync(".wrangler",{recursive:true});
+mkdirSync(".wrangler", { recursive: true });
 writeFileSync(
   ".wrangler/test-session.json",
   JSON.stringify({

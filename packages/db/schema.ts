@@ -30,6 +30,7 @@ export const companies = sqliteTable("companies", {
   createdAt: integer("created_at").notNull(),
   sessionDays: integer("session_days").notNull().default(7),
   gpsAccuracy: integer("gps_accuracy").notNull().default(100),
+  logoKey: text("logo_key"),
 });
 export const branches = sqliteTable(
   "branches",
@@ -112,6 +113,8 @@ export const sync = sqliteTable(
     status: text().notNull(),
     result: text().notNull(),
     receivedAt: integer("received_at").notNull(),
+    branchId: text("branch_id"),
+    deviceHash: text("device_hash"),
   },
   (t) => [index("sync_tenant").on(t.companyId, t.membershipId)],
 );
@@ -146,13 +149,23 @@ export const notifications = sqliteTable("notifications", {
   readAt: integer("read_at"),
   createdAt: integer("created_at").notNull(),
 });
-export const push = sqliteTable("push_subscriptions", {
-  id: text().primaryKey(),
-  companyId: text("company_id").notNull(),
-  membershipId: text("membership_id").notNull(),
-  endpoint: text().notNull().unique(),
-  subscription: text().notNull(),
-});
+export const push = sqliteTable(
+  "push_subscriptions",
+  {
+    id: text().primaryKey(),
+    companyId: text("company_id").notNull(),
+    membershipId: text("membership_id").notNull(),
+    endpoint: text().notNull(),
+    subscription: text().notNull(),
+  },
+  (t) => [
+    uniqueIndex("push_membership_endpoint").on(
+      t.companyId,
+      t.membershipId,
+      t.endpoint,
+    ),
+  ],
+);
 export const outbox = sqliteTable("notification_outbox", {
   id: text().primaryKey(),
   companyId: text("company_id").notNull(),
@@ -161,6 +174,8 @@ export const outbox = sqliteTable("notification_outbox", {
   attempts: integer().notNull().default(0),
   nextAt: integer("next_at").notNull(),
   status: text().notNull().default("pending"),
+  leaseToken: text("lease_token"),
+  leaseUntil: integer("lease_until").notNull().default(0),
 });
 export const rebinds = sqliteTable("device_rebind_requests", {
   id: text().primaryKey(),
@@ -170,4 +185,13 @@ export const rebinds = sqliteTable("device_rebind_requests", {
   reason: text().notNull(),
   status: text().notNull().default("pending"),
   createdAt: integer("created_at").notNull(),
+});
+
+export const attendanceReviews = sqliteTable("attendance_reviews", {
+  operationId: text("operation_id").primaryKey(),
+  companyId: text("company_id").notNull(),
+  actor: text().notNull(),
+  decision: text().notNull(),
+  reason: text().notNull(),
+  decidedAt: integer("decided_at").notNull(),
 });

@@ -119,6 +119,15 @@ app.onError((e, c) => {
       },
       400,
     );
+  if (
+    /push_identity_conflict|rebind_already_decided|attendance_already_closed|attendance_overlap|memberships.company_id, memberships.device_hash/.test(
+      e.message,
+    )
+  )
+    return c.json(
+      { error: "تعارض مع عملية أو جهاز موجود. حدّث الصفحة وراجع الطلب." },
+      409,
+    );
   console.error("request_failed", e.message);
   return c.json({ error: "ما اكتملت العملية. جرّب مرة تانية." }, 500);
 });
@@ -375,6 +384,28 @@ app.get("/api/auth/me", async (c) => {
           s.companyId,
         ).first<Company>()
       : null;
+  // Renew only on authenticated session refresh, and at most once per half-window.
+  if (
+    member &&
+    company &&
+    activeCompany(company) &&
+    !(s.mode === "local" ? member.must_change : user?.must_change)
+  ) {
+    const duration = company.session_days * 86400000;
+    if (s.expires - Date.now() < duration / 2) {
+      s.expires = Date.now() + duration;
+      await c.env.SESSIONS.put(c.get("sid"), JSON.stringify(s), {
+        expirationTtl: company.session_days * 86400,
+      });
+      setCookie(c, "dawami_session", c.get("sid"), {
+        httpOnly: true,
+        secure: new URL(c.req.url).protocol === "https:",
+        sameSite: "Lax",
+        path: "/",
+        maxAge: company.session_days * 86400,
+      });
+    }
+  }
   const memberships =
     s.mode === "global"
       ? (
@@ -733,7 +764,7 @@ app.post("/api/owner/rebinds/:id/approve", async (c) => {
     ),
     stmt(
       c.env,
-      "UPDATE device_rebind_requests SET status='approved' WHERE id=? AND status='pending'",
+      "UPDATE device_rebind_requests SET status='approved' WHERE id=?",
       rid,
     ),
     audit(
@@ -773,6 +804,82 @@ app.use("/api/*", async (c, next) => {
   await next();
 });
 app.get("/api/company", (c) => c.json(c.get("company")));
+
+app.get("/api/company/logo", async (c) => {
+  const key = c.get("company").logo_key;
+  if (!key) fail(404, "ما في شعار للشركة");
+  const object = await c.env.STORAGE.get(key);
+  if (!object) fail(404, "الشعار غير موجود");
+  return new Response(object.body, {
+    headers: {
+      "Content-Type": object.httpMetadata?.contentType || "image/png",
+      "Cache-Control": "private, no-store",
+      "X-Content-Type-Options": "nosniff",
+    },
+  });
+});
+app.put("/api/company/logo", async (c) => {
+  roles(c, "gm", "am");
+  const reader = c.req.raw.body?.getReader();
+  if (!reader) fail(400, "اختر صورة للشعار");
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    total += value.length;
+    if (total > 256 * 1024) {
+      await reader.cancel();
+      fail(400, "الشعار أكبر من 256 كيلوبايت");
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.length;
+  }
+  const png =
+    bytes.length >= 24 &&
+    [137, 80, 78, 71, 13, 10, 26, 10].every((v, i) => bytes[i] === v);
+  const jpeg =
+    bytes.length >= 4 &&
+    bytes[0] === 255 &&
+    bytes[1] === 216 &&
+    bytes[2] === 255;
+  if (!png && !jpeg) fail(400, "الشعار لازم يكون صورة PNG أو JPEG");
+  const company = c.get("company"),
+    key = company.id + "/logos/" + id();
+  await c.env.STORAGE.put(key, bytes, {
+    httpMetadata: { contentType: png ? "image/png" : "image/jpeg" },
+  });
+  try {
+    await c.env.DB.batch([
+      stmt(
+        c.env,
+        "UPDATE companies SET logo_key=? WHERE id=?",
+        key,
+        company.id,
+      ),
+      audit(
+        c.env,
+        c.get("session"),
+        company.id,
+        "company.logo",
+        company.id,
+        "Company logo updated",
+        { key },
+        { key: company.logo_key },
+      ),
+    ]);
+  } catch (e) {
+    await c.env.STORAGE.delete(key);
+    throw e;
+  }
+  // Keep older logo objects for now: concurrent uploads must never delete another request's result.
+  return c.json({ ok: true });
+});
 app.put("/api/company", async (c) => {
   roles(c, "gm", "am");
   const b = z
@@ -1184,7 +1291,7 @@ app.post("/api/device/requests/:id/approve", async (c) => {
     ),
     stmt(
       c.env,
-      "UPDATE device_rebind_requests SET status='approved' WHERE id=? AND company_id=? AND status='pending'",
+      "UPDATE device_rebind_requests SET status='approved' WHERE id=? AND company_id=?",
       r.id,
       target.company_id,
     ),
@@ -1253,9 +1360,10 @@ async function punch(c: any, b: z.infer<typeof punchInput>) {
     m.branch_id ?? "",
   ).first<any>();
   if (!branch) fail(400, "اطلب من المدير تعيين فرعك");
+  const queued = c.req.path === "/api/attendance/sync";
   let review = "";
   if (!activeCompany(co)) {
-    if (!b.offline) fail(423, "الشركة مقفلة");
+    if (!b.offline && !queued) fail(423, "الشركة مقفلة");
     review = "وصل بعد قفل الشركة";
   }
   if (b.accuracy > co.gps_accuracy)
@@ -1264,12 +1372,12 @@ async function punch(c: any, b: z.infer<typeof punchInput>) {
   if (meters > branch.radius)
     fail(400, `أنت برّا نطاق الفرع (${Math.round(meters)} م)`);
   if (b.deviceTime > now + 60000) review = "وقت الجهاز بالمستقبل";
-  if (b.offline) review = review || "حضور أوفلاين يحتاج مراجعة الوقت";
+  if (b.offline || queued) review = review || "حضور أوفلاين يحتاج مراجعة الوقت";
   const result = { status: review ? "review" : "accepted", reason: review },
     ops: D1PreparedStatement[] = [
       stmt(
         env,
-        "INSERT INTO sync_operations(id,company_id,membership_id,payload_hash,payload,status,result,received_at) VALUES(?,?,?,?,?,?,?,?)",
+        "INSERT INTO sync_operations(id,company_id,membership_id,payload_hash,payload,status,result,received_at,branch_id,device_hash) VALUES(?,?,?,?,?,?,?,?,?,?)",
         b.id,
         m.company_id,
         m.id,
@@ -1278,6 +1386,8 @@ async function punch(c: any, b: z.infer<typeof punchInput>) {
         result.status,
         JSON.stringify(result),
         now,
+        branch.id,
+        s.device,
       ),
     ];
   if (!review) {
@@ -1315,7 +1425,7 @@ async function punch(c: any, b: z.infer<typeof punchInput>) {
       ops.push(
         stmt(
           env,
-          "UPDATE attendance_logs SET out_at=?,out_lat=?,out_lng=? WHERE id=? AND company_id=? AND out_at IS NULL",
+          "UPDATE attendance_logs SET out_at=?,out_lat=?,out_lng=? WHERE id=? AND company_id=?",
           now,
           b.lat,
           b.lng,
@@ -1374,6 +1484,170 @@ app.post("/api/attendance/punch", async (c) =>
 app.post("/api/attendance/sync", async (c) =>
   c.json(await punch(c, punchInput.parse(await c.req.json()))),
 );
+
+app.get("/api/attendance/reviews", async (c) => {
+  roles(c, "gm", "am", "manager");
+  const m = c.get("member"),
+    scope = memberScope(m);
+  const rows = (
+    await stmt(
+      c.env,
+      `SELECT o.id,o.membership_id,o.payload,o.result,o.received_at,u.name,b.name AS branch FROM sync_operations o JOIN memberships m ON m.id=o.membership_id AND m.company_id=o.company_id JOIN users u ON u.id=m.user_id LEFT JOIN branches b ON b.id=o.branch_id AND b.company_id=o.company_id WHERE o.company_id=? AND o.status='review' AND m.id<>?` +
+        scope.sql +
+        " ORDER BY o.received_at LIMIT 100",
+      m.company_id,
+      m.id,
+      ...scope.args,
+    ).all<any>()
+  ).results;
+  return c.json({
+    items: rows.map((row) => ({
+      ...row,
+      payload: JSON.parse(row.payload),
+      result: JSON.parse(row.result),
+    })),
+  });
+});
+app.post("/api/attendance/reviews/:id", async (c) => {
+  roles(c, "gm", "am", "manager");
+  const actor = c.get("member"),
+    operationId = uuid.parse(c.req.param("id"));
+  const b = z
+    .object({
+      decision: z.enum(["approve", "reject"]),
+      reason: z.string().trim().min(5).max(500),
+    })
+    .parse(await c.req.json());
+  const op = await stmt(
+    c.env,
+    "SELECT * FROM sync_operations WHERE id=? AND company_id=?",
+    operationId,
+    actor.company_id,
+  ).first<any>();
+  if (!op) fail(404, "الحدث غير موجود");
+  const target = await allowedTarget(c, op.membership_id);
+  if (target.id === actor.id) fail(403, "ما فيك تعتمد حضورك الشخصي");
+  if (!canReset(actor.role, target.role))
+    fail(403, "هالحساب يحتاج مدير أعلى للمراجعة");
+  if (op.status !== "review") fail(409, "تم حسم هالحدث سابقاً");
+  const event = punchInput.parse(JSON.parse(op.payload)),
+    now = Date.now();
+  const result = {
+    status: b.decision === "approve" ? "accepted" : "error",
+    reason: b.reason,
+  };
+  const operations: D1PreparedStatement[] = [
+    stmt(
+      c.env,
+      "INSERT INTO attendance_reviews(operation_id,company_id,actor,decision,reason,decided_at) VALUES(?,?,?,?,?,?)",
+      op.id,
+      actor.company_id,
+      actor.id,
+      b.decision,
+      b.reason,
+      now,
+    ),
+  ];
+  if (b.decision === "approve") {
+    if (!op.branch_id || !op.device_hash)
+      fail(409, "حدث قديم دون سياق كافٍ. ارفضه مع السبب");
+    if (event.deviceTime > now || event.deviceTime > op.received_at)
+      fail(409, "وقت الحدث بعد استلامه. ارفضه وراجع وقت الجهاز");
+    if (target.status !== "active") fail(409, "العضوية غير فعالة");
+    const open = await stmt(
+      c.env,
+      "SELECT id,in_at FROM attendance_logs WHERE company_id=? AND membership_id=? AND out_at IS NULL",
+      actor.company_id,
+      target.id,
+    ).first<any>();
+    if (event.action === "in") {
+      if (open) fail(409, "في جلسة مفتوحة. راجع الخروج أولاً");
+      const date = new Intl.DateTimeFormat("en-CA", {
+        timeZone: c.get("company").timezone,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }).format(event.deviceTime);
+      operations.push(
+        stmt(
+          c.env,
+          "INSERT INTO attendance_logs(id,company_id,membership_id,branch_id,in_at,in_lat,in_lng,device_hash,work_date) VALUES(?,?,?,?,?,?,?,?,?)",
+          op.id,
+          actor.company_id,
+          target.id,
+          op.branch_id,
+          event.deviceTime,
+          event.lat,
+          event.lng,
+          op.device_hash,
+          date,
+        ),
+      );
+    } else {
+      if (!open || event.deviceTime < open.in_at)
+        fail(409, "ما في دخول سابق مناسب. راجع الأحداث بالترتيب");
+      operations.push(
+        stmt(
+          c.env,
+          "UPDATE attendance_logs SET out_at=?,out_lat=?,out_lng=? WHERE id=? AND company_id=?",
+          event.deviceTime,
+          event.lat,
+          event.lng,
+          open.id,
+          actor.company_id,
+        ),
+      );
+    }
+  }
+  operations.push(
+    stmt(
+      c.env,
+      "UPDATE sync_operations SET status=?,result=? WHERE id=? AND company_id=?",
+      result.status,
+      JSON.stringify(result),
+      op.id,
+      actor.company_id,
+    ),
+  );
+  operations.push(
+    audit(
+      c.env,
+      c.get("session"),
+      actor.company_id,
+      "attendance." + b.decision,
+      op.id,
+      b.reason,
+      { status: result.status },
+      { status: op.status },
+    ),
+  );
+  operations.push(
+    stmt(
+      c.env,
+      "INSERT INTO notifications(id,company_id,recipient,title,body,url,created_at) VALUES(?,?,?,?,?,?,?)",
+      id(),
+      actor.company_id,
+      target.id,
+      b.decision === "approve" ? "تم اعتماد حدث الحضور" : "تم رفض حدث الحضور",
+      b.reason,
+      "/?view=attendance",
+      now,
+    ),
+  );
+  try {
+    await c.env.DB.batch(operations);
+  } catch (e) {
+    if (
+      /constraint|review_conflict|attendance_overlap|attendance_already_closed/i.test(
+        String(e),
+      )
+    )
+      fail(409, "تعارض مع حدث آخر. حدّث القائمة وراجع التوقيت");
+    throw e;
+  }
+  return c.json(result);
+});
+
 app.get("/api/dashboard", async (c) => {
   const m = c.get("member"),
     scope = memberScope(m),
@@ -1451,14 +1725,14 @@ app.post("/api/push/subscribe", async (c) => {
   const m = c.get("member"),
     old = await stmt(
       c.env,
-      "SELECT company_id,membership_id FROM push_subscriptions WHERE endpoint=?",
+      "SELECT m.user_id FROM push_subscriptions p JOIN memberships m ON m.id=p.membership_id AND m.company_id=p.company_id WHERE p.endpoint=?",
       b.endpoint,
     ).first<any>();
-  if (old && (old.company_id !== m.company_id || old.membership_id !== m.id))
+  if (old && old.user_id !== m.user_id)
     fail(409, "الإشعارات مربوطة بعضوية ثانية على هالمتصفح");
   await stmt(
     c.env,
-    "INSERT INTO push_subscriptions(id,company_id,membership_id,endpoint,subscription) VALUES(?,?,?,?,?) ON CONFLICT(endpoint) DO UPDATE SET subscription=excluded.subscription",
+    "INSERT INTO push_subscriptions(id,company_id,membership_id,endpoint,subscription) VALUES(?,?,?,?,?) ON CONFLICT(company_id,membership_id,endpoint) DO UPDATE SET subscription=excluded.subscription",
     id(),
     m.company_id,
     m.id,

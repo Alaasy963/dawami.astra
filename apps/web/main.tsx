@@ -1,5 +1,8 @@
+import { t, language, locale } from "./i18n";
 import {
   StrictMode,
+  createContext,
+  useContext,
   useState,
   useEffect,
   useCallback,
@@ -37,19 +40,34 @@ import {
   localDB,
   syncQueue,
   currencies,
+  uploadLogo,
   type Operation,
 } from "./lib";
 import "./style.css";
+document.documentElement.lang = language;
+document.documentElement.dir = language === "en" ? "ltr" : "rtl";
 const MapView = lazy(() => import("./Map"));
+const LiteContext = createContext(false);
+function OptionalMap(props: { lat: number; lng: number; radius?: number }) {
+  const lite = useContext(LiteContext),
+    [show, setShow] = useState(false);
+  if (lite && !show)
+    return (
+      <button className="ghost" onClick={() => setShow(true)}>
+        {t("تحميل الخريطة عند الطلب")}
+      </button>
+    );
+  return <MapView {...props} />;
+}
 const roles: Record<string, string> = {
-  gm: "مدير عام",
-  am: "مدير مساعد",
-  manager: "مدير فرع / قسم",
-  worker: "عامل",
+  gm: t("مدير عام"),
+  am: t("مدير مساعد"),
+  manager: t("مدير فرع / قسم"),
+  worker: t("عامل"),
 };
 const time = (v: number) =>
   v
-    ? new Intl.DateTimeFormat("ar-u-nu-latn", {
+    ? new Intl.DateTimeFormat(locale, {
         hour: "2-digit",
         minute: "2-digit",
       }).format(v)
@@ -63,12 +81,27 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
     </label>
   );
 }
-function Empty({ text = "ما في سجلات لسا." }: { text?: string }) {
+function Empty({ text = t("ما في سجلات لسا.") }: { text?: string }) {
   return (
     <div className="empty">
       <Clock3 size={30} />
       <p>{text}</p>
     </div>
+  );
+}
+function LanguageSwitch() {
+  return (
+    <button
+      type="button"
+      className="ghost"
+      aria-label={language === "en" ? "Switch to Arabic" : "Switch to English"}
+      onClick={() => {
+        localStorage.setItem("language", language === "en" ? "ar" : "en");
+        window.location.reload();
+      }}
+    >
+      {language === "en" ? "العربية" : "English"}
+    </button>
   );
 }
 function Brand() {
@@ -77,7 +110,7 @@ function Brand() {
       <span>
         <Check strokeWidth={3} size={27} />
       </span>
-      <b>دوامي</b>
+      <b>{t("دوامي")}</b>
       <small>DAWAMI</small>
     </div>
   );
@@ -95,14 +128,20 @@ function useData(path: string, revision = 0) {
       alive = false;
     };
   }, [path, revision]);
-  return { data, error };
+  return {
+    data,
+    error,
+  };
 }
 function CurrencySelect({ value = "SYP" }: { value?: string }) {
   return (
     <select name="currency" defaultValue={value}>
       {currencies.map((x) => (
         <option key={x} value={x}>
-          {x} — {new Intl.DisplayNames(["ar"], { type: "currency" }).of(x)}
+          {x} —{" "}
+          {new Intl.DisplayNames([language], {
+            type: "currency",
+          }).of(x)}
         </option>
       ))}
     </select>
@@ -118,35 +157,36 @@ function Auth({ onSuccess }: { onSuccess: () => Promise<void> }) {
       <section className="auth-story">
         <Brand />
         <div>
-          <span className="pill">وقت أقل بالإدارة، وقت أكثر للشغل</span>
+          <span className="pill">{t("وقت أقل بالإدارة، وقت أكثر للشغل")}</span>
           <h1>
-            يوم شغل واضح.
+            {t("يوم شغل واضح.")}
             <br />
-            وفريق على نفس الصفحة.
+            {t("وفريق على نفس الصفحة.")}
           </h1>
           <p>
-            الحضور، الفريق، والفروع — بمكان واحد،
+            {t("الحضور، الفريق، والفروع — بمكان واحد،")}
             <br />
-            مصمّم ليكون بسيط من أول يوم.
+            {t("مصمّم ليكون بسيط من أول يوم.")}
           </p>
           <div className="story-card">
             <Check />
             <div>
-              <strong>كل حضور إلو مكان ووقت</strong>
-              <p>تسجيل آمن ضمن نطاق الفرع</p>
+              <strong>{t("كل حضور إلو مكان ووقت")}</strong>
+              <p>{t("تسجيل آمن ضمن نطاق الفرع")}</p>
             </div>
             <ShieldCheck />
           </div>
         </div>
-        <small>دوامي · نظام الحضور وإدارة الفريق</small>
+        <small>{t("دوامي · نظام الحضور وإدارة الفريق")}</small>
       </section>
       <section className="auth-card">
-        <div className="eyebrow">أهلاً فيك بدوامي</div>
-        <h2>{signup ? "خلّينا نرتّب يوم شركتك" : "منوّر من جديد"}</h2>
+        <LanguageSwitch />
+        <div className="eyebrow">{t("أهلاً فيك بدوامي")}</div>
+        <h2>{signup ? t("خلّينا نرتّب يوم شركتك") : t("منوّر من جديد")}</h2>
         <p>
           {signup
-            ? "أنشئ شركتك وابدأ التجربة المجانية."
-            : "سجّل دخول وتابع يومك."}
+            ? t("أنشئ شركتك وابدأ التجربة المجانية.")
+            : t("سجّل دخول وتابع يومك.")}
         </p>
         <form
           onSubmit={async (e) => {
@@ -166,7 +206,9 @@ function Auth({ onSuccess }: { onSuccess: () => Promise<void> }) {
                       currency: f.get("currency"),
                     }
                   : local
-                    ? { companyId: f.get("companyId") }
+                    ? {
+                        companyId: f.get("companyId"),
+                      }
                     : {}),
               });
               await onSuccess();
@@ -179,18 +221,18 @@ function Auth({ onSuccess }: { onSuccess: () => Promise<void> }) {
         >
           {signup && (
             <>
-              <Field label="اسم الشركة">
+              <Field label={t("اسم الشركة")}>
                 <input name="company" required minLength={2} />
               </Field>
-              <Field label="اسمك الكامل">
+              <Field label={t("اسمك الكامل")}>
                 <input name="name" required minLength={2} />
               </Field>
-              <Field label="عملة الشركة">
+              <Field label={t("عملة الشركة")}>
                 <CurrencySelect />
               </Field>
             </>
           )}
-          <Field label="رقم الموبايل مع رمز البلد">
+          <Field label={t("رقم الموبايل مع رمز البلد")}>
             <input
               name="phone"
               type="tel"
@@ -200,7 +242,7 @@ function Auth({ onSuccess }: { onSuccess: () => Promise<void> }) {
               autoComplete="tel"
             />
           </Field>
-          <Field label="كلمة السر / PIN">
+          <Field label={t("كلمة السر / PIN")}>
             <input
               name="pin"
               type="password"
@@ -210,7 +252,7 @@ function Auth({ onSuccess }: { onSuccess: () => Promise<void> }) {
             />
           </Field>
           {local && !signup && (
-            <Field label="رمز الشركة من المدير">
+            <Field label={t("رمز الشركة من المدير")}>
               <input name="companyId" dir="ltr" required />
             </Field>
           )}
@@ -218,30 +260,34 @@ function Auth({ onSuccess }: { onSuccess: () => Promise<void> }) {
             {error}
           </div>
           <button disabled={busy} className="wide">
-            {busy ? "عم نتحقق…" : signup ? "إنشاء الشركة" : "تسجيل الدخول"}
+            {busy
+              ? t("عم نتحقق…")
+              : signup
+                ? t("إنشاء الشركة")
+                : t("تسجيل الدخول")}
             <ArrowUpLeft size={19} />
           </button>
         </form>
         {!signup && (
           <button className="text-button" onClick={() => setLocal(!local)}>
-            {local ? "الدخول بالهوية العامة" : "عندي PIN مؤقت من المدير"}
+            {local ? t("الدخول بالهوية العامة") : t("عندي PIN مؤقت من المدير")}
           </button>
         )}
         <div className="auth-switch">
-          {signup ? "عندك حساب؟" : "أول مرة هون؟"}{" "}
+          {signup ? t("عندك حساب؟") : t("أول مرة هون؟")}{" "}
           <button
             onClick={() => {
               setSignup(!signup);
               setError("");
             }}
           >
-            {signup ? "سجّل دخول" : "أنشئ شركتك"}
+            {signup ? t("سجّل دخول") : t("أنشئ شركتك")}
           </button>
         </div>
         <p className="fine-print">
-          نسيت PIN؟ مديرك المسؤول بيساعدك باستعادته.
+          {t("نسيت PIN؟ مديرك المسؤول بيساعدك باستعادته.")}
           <br />
-          ما في دفع داخل التطبيق.
+          {t("ما في دفع داخل التطبيق.")}
         </p>
       </section>
     </div>
@@ -253,13 +299,20 @@ function App() {
     [view, setView] = useState(
       new URLSearchParams(location.search).get("view") === "location"
         ? "notifications"
-        : "dashboard",
+        : new URLSearchParams(location.search).get("view") === "attendance"
+          ? "attendance"
+          : "dashboard",
     ),
     [revision, setRevision] = useState(0),
     [message, setMessage] = useState(""),
     [busy, setBusy] = useState(false),
     [online, setOnline] = useState(navigator.onLine),
-    [dark, setDark] = useState(localStorage.getItem("theme") === "dark");
+    [dark, setDark] = useState(localStorage.getItem("theme") === "dark"),
+    [lite, setLite] = useState(localStorage.getItem("lite") === "true");
+  useEffect(() => {
+    document.documentElement.toggleAttribute("data-lite", lite);
+    localStorage.setItem("lite", String(lite));
+  }, [lite]);
   const refresh = useCallback(async () => {
     try {
       const x = await api("/auth/me");
@@ -269,7 +322,10 @@ function App() {
         const { csrf, memberships, ...snapshot } = x;
         sessionStorage.setItem(
           "dawami-offline-profile",
-          JSON.stringify({ ...snapshot, memberships: [] }),
+          JSON.stringify({
+            ...snapshot,
+            memberships: [],
+          }),
         );
       } else sessionStorage.removeItem("dawami-offline-profile");
     } catch (e) {
@@ -285,9 +341,9 @@ function App() {
             setMe(snapshot);
             setView("attendance");
             setMessage(
-              "أنت أوفلاين. الحضور محفوظ محلياً وبانتظار تحقق الخادم.",
+              t("أنت أوفلاين. الحضور محفوظ محلياً وبانتظار تحقق الخادم."),
             );
-          } else setMessage("اتصل بالإنترنت لتجديد جلسة الدخول.");
+          } else setMessage(t("اتصل بالإنترنت لتجديد جلسة الدخول."));
         } catch {
           sessionStorage.removeItem("dawami-offline-profile");
         }
@@ -319,7 +375,7 @@ function App() {
         setRevision((x) => x + 1),
       );
   }, [me?.member?.id, me?.csrf, online]);
-  const act: Action = async (fn, success = "تم الحفظ") => {
+  const act: Action = async (fn, success = t("تم الحفظ")) => {
     setBusy(true);
     setMessage("");
     try {
@@ -333,15 +389,16 @@ function App() {
       setBusy(false);
     }
   };
-  if (!ready) return <div className="loading">عم نجهّز يومك…</div>;
+  if (!ready) return <div className="loading">{t("عم نجهّز يومك…")}</div>;
   if (!me) return <Auth onSuccess={refresh} />;
   if (me.mustChange)
     return (
       <div className="auth simple">
         <section className="auth-card">
+          <LanguageSwitch />
           <Brand />
-          <h1>خلّي حسابك إلك</h1>
-          <p>غيّر PIN المؤقت قبل المتابعة.</p>
+          <h1>{t("خلّي حسابك إلك")}</h1>
+          <p>{t("غيّر PIN المؤقت قبل المتابعة.")}</p>
           <form
             onSubmit={(e) => {
               e.preventDefault();
@@ -354,7 +411,7 @@ function App() {
               );
             }}
           >
-            <Field label="PIN الحالي">
+            <Field label={t("PIN الحالي")}>
               <input
                 name="current"
                 type="password"
@@ -362,7 +419,7 @@ function App() {
                 autoComplete="current-password"
               />
             </Field>
-            <Field label="PIN الجديد (8 محارف على الأقل)">
+            <Field label={t("PIN الجديد (8 محارف على الأقل)")}>
               <input
                 name="next"
                 type="password"
@@ -371,7 +428,7 @@ function App() {
                 autoComplete="new-password"
               />
             </Field>
-            <button disabled={busy}>حفظ ومتابعة</button>
+            <button disabled={busy}>{t("حفظ ومتابعة")}</button>
           </form>
           <p role="status">{message}</p>
         </section>
@@ -381,8 +438,9 @@ function App() {
     return (
       <div className="auth simple">
         <section className="auth-card">
+          <LanguageSwitch />
           <Brand />
-          <h1>اختار شركتك</h1>
+          <h1>{t("اختار شركتك")}</h1>
           {me.memberships.map((m: any) => (
             <button
               className="choice"
@@ -394,13 +452,17 @@ function App() {
                     m.status === "invited"
                       ? "/auth/accept-invitation"
                       : "/auth/select",
-                    { membershipId: m.id },
+                    {
+                      membershipId: m.id,
+                    },
                   ),
                 )
               }
             >
               {m.name}
-              <span>{m.status === "invited" ? "قبول الدعوة" : "دخول"} ←</span>
+              <span>
+                {m.status === "invited" ? t("قبول الدعوة") : t("دخول")} ←
+              </span>
             </button>
           ))}
           <p role="status">{message}</p>
@@ -408,7 +470,7 @@ function App() {
             className="ghost"
             onClick={() => void act(() => api("/auth/logout"))}
           >
-            تسجيل خروج
+            {t("تسجيل خروج")}
           </button>
         </section>
       </div>
@@ -417,18 +479,22 @@ function App() {
     return (
       <div className="auth simple">
         <section className="auth-card">
+          <LanguageSwitch />
           <ShieldCheck size={44} />
-          <h1>منكمّل بعد التجديد</h1>
+          <h1>{t("منكمّل بعد التجديد")}</h1>
           <p>
-            انتهى اشتراك {me.company.name} أو تم إيقافه. الدفع خارج التطبيق؛
-            تواصل مع مالك دوامي لتفعيل الاشتراك.
+            {t("انتهى اشتراك")}
+            {me.company.name}
+            {t(
+              "أو تم إيقافه. الدفع خارج التطبيق؛ تواصل مع مالك دوامي لتفعيل الاشتراك.",
+            )}
           </p>
-          <button onClick={() => void refresh()}>تحقق من التفعيل</button>
+          <button onClick={() => void refresh()}>{t("تحقق من التفعيل")}</button>
           <button
             className="ghost"
             onClick={() => void act(() => api("/auth/logout"))}
           >
-            تسجيل خروج
+            {t("تسجيل خروج")}
           </button>
         </section>
       </div>
@@ -436,209 +502,247 @@ function App() {
   const manager = me.owner || me.member.role !== "worker",
     nav: any[] = me.owner
       ? [
-          ["owner", "الشركات", Building2],
-          ["ownerSettings", "إعدادات المنصة", Settings],
-          ["ownerRecovery", "استعادة الحسابات", ShieldCheck],
+          ["owner", t("الشركات"), Building2],
+          ["ownerSettings", t("إعدادات المنصة"), Settings],
+          ["ownerRecovery", t("استعادة الحسابات"), ShieldCheck],
         ]
       : [
-          ["dashboard", "نظرة عامة", LayoutDashboard],
-          ["attendance", "حضوري", Clock3],
+          ["dashboard", t("نظرة عامة"), LayoutDashboard],
+          ["attendance", t("حضوري"), Clock3],
           ...(manager
             ? [
-                ["members", "فريق العمل", Users],
-                ["branches", "الفروع والأقسام", MapPin],
-                ["devices", "طلبات الأجهزة", ShieldCheck],
+                ["members", t("فريق العمل"), Users],
+                ["branches", t("الفروع والأقسام"), MapPin],
+                ["devices", t("طلبات الأجهزة"), ShieldCheck],
+                ["reviews", t("مراجعة الحضور"), Clock3],
               ]
             : []),
-          ["notifications", "الإشعارات", Bell],
+          ["notifications", t("الإشعارات"), Bell],
           ...(["gm", "am"].includes(me.member.role)
-            ? [["settings", "إعدادات الشركة", Settings]]
+            ? [["settings", t("إعدادات الشركة"), Settings]]
             : []),
           ...(me.member.role === "gm"
-            ? [["audit", "سجل الرقابة", ShieldCheck]]
+            ? [["audit", t("سجل الرقابة"), ShieldCheck]]
             : []),
         ],
     actualView = me.owner && view === "dashboard" ? "owner" : view;
   return (
-    <div className="app">
-      <a className="skip" href="#main">
-        انتقل للمحتوى
-      </a>
-      <aside>
-        <Brand />
-        <div className="workspace">
-          <Building2 size={23} />
-          <div>
-            <strong>{me.owner ? "إدارة المنصة" : me.company.name}</strong>
-            <small>{me.owner ? "مالك دوامي" : roles[me.member.role]}</small>
-          </div>
-        </div>
-        {!me.owner && me.mode === "global" && me.memberships.length > 1 && (
-          <label className="workspace-switch">
-            الشركة
-            <select
-              aria-label="تبديل الشركة"
-              value={me.member.id}
-              disabled={busy}
-              onChange={(e) => {
-                const selected = me.memberships.find(
-                  (m: any) => m.id === e.target.value,
-                );
-                void act(async () => {
-                  await api(
-                    selected.status === "invited"
-                      ? "/auth/accept-invitation"
-                      : "/auth/select",
-                    { membershipId: selected.id },
-                  );
-                  setView("dashboard");
-                });
-              }}
-            >
-              {me.memberships
-                .filter((m: any) => ["active", "invited"].includes(m.status))
-                .map((m: any) => (
-                  <option key={m.id} value={m.id}>
-                    {m.name}
-                    {m.status === "invited" ? " — قبول الدعوة" : ""}
-                  </option>
-                ))}
-            </select>
-          </label>
-        )}
-        <span className="nav-caption">مساحة العمل</span>
-        <nav>
-          {nav.map(([key, label, Icon]) => (
-            <button
-              className={actualView === key ? "active" : ""}
-              key={key}
-              onClick={() => {
-                setView(key);
-                setMessage("");
-              }}
-            >
-              <Icon size={20} />
-              {label}
-              {actualView === key && <span className="nav-dot" />}
-            </button>
-          ))}
-        </nav>
-        <div className="sidebar-bottom">
-          <div className="help">
-            <span>كل يوم، أوضح.</span>
-            <p>حضور فريقك بمكان واحد.</p>
-          </div>
-          <small>دوامي · المرحلة الأولى</small>
-        </div>
-      </aside>
-      <div className="body">
-        <header>
-          <div className="breadcrumb">
-            مساحة العمل <ChevronLeft size={15} />
-            <strong>{nav.find((x) => x[0] === actualView)?.[1]}</strong>
-          </div>
-          <div className="header-actions">
-            <span className={online ? "connection" : "connection offline"}>
-              {online ? <span className="dot" /> : <WifiOff size={14} />}{" "}
-              {online ? "متصل" : "بدون اتصال"}
-            </span>
-            <button
-              className="icon"
-              aria-label="تبديل الوضع الداكن"
-              onClick={() => setDark(!dark)}
-            >
-              {dark ? <Sun size={18} /> : <Moon size={18} />}
-            </button>
-            <button
-              className="icon"
-              aria-label="تسجيل خروج"
-              onClick={() => void act(() => api("/auth/logout"))}
-            >
-              <LogOut size={18} />
-            </button>
-            <span className="avatar">{me.name[0]}</span>
-          </div>
-        </header>
-        <main id="main">
-          <div className="page-heading">
+    <LiteContext.Provider value={lite}>
+      <div className="app">
+        <a className="skip" href="#main">
+          {t("انتقل للمحتوى")}
+        </a>
+        <aside>
+          <Brand />
+          <div className="workspace">
+            {me.company?.logo_key ? (
+              <img
+                className="company-logo"
+                src={
+                  "/api/company/logo?v=" +
+                  encodeURIComponent(me.company.logo_key)
+                }
+                alt={t("شعار الشركة")}
+              />
+            ) : (
+              <Building2 size={23} />
+            )}
             <div>
-              <div className="eyebrow">
-                {new Intl.DateTimeFormat("ar-u-nu-latn", {
-                  weekday: "long",
-                  day: "numeric",
-                  month: "long",
-                }).format(new Date())}
-              </div>
-              <h1>
-                {actualView === "dashboard"
-                  ? `صباح الشغل الحلو، ${me.name.split(" ")[0]}`
-                  : nav.find((x) => x[0] === actualView)?.[1]}
-              </h1>
-              <p>
-                {actualView === "dashboard"
-                  ? "كل اللي بدك تعرفه عن فريقك اليوم."
-                  : "تفاصيل واضحة، وقرارات بإيدك."}
-              </p>
+              <strong>{me.owner ? t("إدارة المنصة") : me.company.name}</strong>
+              <small>
+                {me.owner ? t("مالك دوامي") : roles[me.member.role]}
+              </small>
             </div>
-            <button
-              className="secondary"
-              disabled={busy}
-              onClick={() => {
-                setRevision((x) => x + 1);
-                void refresh();
-              }}
-            >
-              <RefreshCw size={16} /> تحديث
-            </button>
           </div>
-          {message && (
-            <div className="notice" role="status">
-              {message}
-              <button aria-label="إغلاق الرسالة" onClick={() => setMessage("")}>
-                ×
+          {!me.owner && me.mode === "global" && me.memberships.length > 1 && (
+            <label className="workspace-switch">
+              {t("الشركة")}
+              <select
+                aria-label={t("تبديل الشركة")}
+                value={me.member.id}
+                disabled={busy}
+                onChange={(e) => {
+                  const selected = me.memberships.find(
+                    (m: any) => m.id === e.target.value,
+                  );
+                  void act(async () => {
+                    await api(
+                      selected.status === "invited"
+                        ? "/auth/accept-invitation"
+                        : "/auth/select",
+                      {
+                        membershipId: selected.id,
+                      },
+                    );
+                    setView("dashboard");
+                  });
+                }}
+              >
+                {me.memberships
+                  .filter((m: any) => ["active", "invited"].includes(m.status))
+                  .map((m: any) => (
+                    <option key={m.id} value={m.id}>
+                      {m.name}
+                      {m.status === "invited" ? t(" — قبول الدعوة") : ""}
+                    </option>
+                  ))}
+              </select>
+            </label>
+          )}
+          <span className="nav-caption">{t("مساحة العمل")}</span>
+          <nav>
+            {nav.map(([key, label, Icon]) => (
+              <button
+                className={actualView === key ? "active" : ""}
+                key={key}
+                onClick={() => {
+                  setView(key);
+                  setMessage("");
+                }}
+              >
+                <Icon size={20} />
+                {label}
+                {actualView === key && <span className="nav-dot" />}
+              </button>
+            ))}
+          </nav>
+          <div className="sidebar-bottom">
+            <div className="help">
+              <span>{t("كل يوم، أوضح.")}</span>
+              <p>{t("حضور فريقك بمكان واحد.")}</p>
+            </div>
+            <small>{t("دوامي · المرحلة الأولى")}</small>
+          </div>
+        </aside>
+        <div className="body">
+          <header>
+            <div className="breadcrumb">
+              {t("مساحة العمل")}
+              <ChevronLeft size={15} />
+              <strong>{nav.find((x) => x[0] === actualView)?.[1]}</strong>
+            </div>
+            <div className="header-actions">
+              <LanguageSwitch />
+              <button
+                className="ghost lite-toggle"
+                aria-pressed={lite}
+                onClick={() => setLite(!lite)}
+              >
+                {t("الوضع الخفيف:")}
+                {lite ? t("مفعّل") : t("متوقف")}
+              </button>
+              <span className={online ? "connection" : "connection offline"}>
+                {online ? <span className="dot" /> : <WifiOff size={14} />}{" "}
+                {online ? t("متصل") : t("بدون اتصال")}
+              </span>
+              <button
+                className="icon"
+                aria-label={t("تبديل الوضع الداكن")}
+                onClick={() => setDark(!dark)}
+              >
+                {dark ? <Sun size={18} /> : <Moon size={18} />}
+              </button>
+              <button
+                className="icon"
+                aria-label={t("تسجيل خروج")}
+                onClick={() => void act(() => api("/auth/logout"))}
+              >
+                <LogOut size={18} />
+              </button>
+              <span className="avatar">{me.name[0]}</span>
+            </div>
+          </header>
+          <main id="main">
+            <div className="page-heading">
+              <div>
+                <div className="eyebrow">
+                  {new Intl.DateTimeFormat(locale, {
+                    weekday: "long",
+                    day: "numeric",
+                    month: "long",
+                  }).format(new Date())}
+                </div>
+                <h1>
+                  {actualView === "dashboard"
+                    ? t("صباح الشغل الحلو، {0}", [me.name.split(" ")[0]])
+                    : nav.find((x) => x[0] === actualView)?.[1]}
+                </h1>
+                <p>
+                  {actualView === "dashboard"
+                    ? t("كل اللي بدك تعرفه عن فريقك اليوم.")
+                    : t("تفاصيل واضحة، وقرارات بإيدك.")}
+                </p>
+              </div>
+              <button
+                className="secondary"
+                disabled={busy}
+                onClick={() => {
+                  setRevision((x) => x + 1);
+                  void refresh();
+                }}
+              >
+                <RefreshCw size={16} />
+                {t("تحديث")}
               </button>
             </div>
-          )}
-          {me.mode === "local" && (
-            <div className="notice">
-              هذا الدخول خاص بشركة {me.company.name} فقط.
-            </div>
-          )}
-          {actualView === "dashboard" && (
-            <Dashboard me={me} revision={revision} setView={setView} />
-          )}
-          {actualView === "attendance" && (
-            <Attendance me={me} revision={revision} act={act} busy={busy} />
-          )}
-          {actualView === "members" && (
-            <Members me={me} revision={revision} act={act} busy={busy} />
-          )}
-          {actualView === "branches" && (
-            <Branches me={me} revision={revision} act={act} busy={busy} />
-          )}
-          {actualView === "settings" && (
-            <CompanySettings me={me} act={act} busy={busy} />
-          )}
-          {actualView === "notifications" && (
-            <Notifications revision={revision} act={act} />
-          )}
-          {actualView === "devices" && (
-            <Devices revision={revision} act={act} />
-          )}
-          {actualView === "audit" && <Audit revision={revision} />}
-          {actualView === "owner" && <Owner revision={revision} act={act} />}
-          {actualView === "ownerSettings" && (
-            <OwnerSettings revision={revision} act={act} busy={busy} />
-          )}
-          {actualView === "ownerRecovery" && (
-            <OwnerRecovery revision={revision} act={act} busy={busy} />
-          )}
-        </main>
-        <footer>
-          دوامي — يومك منظّم، وفريقك أقرب.<span>حضور · فريق · وضوح</span>
-        </footer>
+            {message && (
+              <div className="notice" role="status">
+                {message}
+                <button
+                  aria-label={t("إغلاق الرسالة")}
+                  onClick={() => setMessage("")}
+                >
+                  ×
+                </button>
+              </div>
+            )}
+            {me.mode === "local" && (
+              <div className="notice">
+                {t("هذا الدخول خاص بشركة")}
+                {me.company.name}
+                {t("فقط.")}
+              </div>
+            )}
+            {actualView === "dashboard" && (
+              <Dashboard me={me} revision={revision} setView={setView} />
+            )}
+            {actualView === "attendance" && (
+              <Attendance me={me} revision={revision} act={act} busy={busy} />
+            )}
+            {actualView === "members" && (
+              <Members me={me} revision={revision} act={act} busy={busy} />
+            )}
+            {actualView === "branches" && (
+              <Branches me={me} revision={revision} act={act} busy={busy} />
+            )}
+            {actualView === "settings" && (
+              <CompanySettings me={me} act={act} busy={busy} />
+            )}
+            {actualView === "notifications" && (
+              <Notifications revision={revision} act={act} />
+            )}
+            {actualView === "devices" && (
+              <Devices revision={revision} act={act} />
+            )}
+            {actualView === "reviews" && (
+              <AttendanceReviews revision={revision} act={act} busy={busy} />
+            )}
+            {actualView === "audit" && <Audit revision={revision} />}
+            {actualView === "owner" && <Owner revision={revision} act={act} />}
+            {actualView === "ownerSettings" && (
+              <OwnerSettings revision={revision} act={act} busy={busy} />
+            )}
+            {actualView === "ownerRecovery" && (
+              <OwnerRecovery revision={revision} act={act} busy={busy} />
+            )}
+          </main>
+          <footer>
+            {t("دوامي — يومك منظّم، وفريقك أقرب.")}
+            <span>{t("حضور · فريق · وضوح")}</span>
+          </footer>
+        </div>
       </div>
-    </div>
+    </LiteContext.Provider>
   );
 }
 function Dashboard({
@@ -652,32 +756,32 @@ function Dashboard({
 }) {
   const { data, error } = useData("/dashboard", revision);
   if (error) return <div className="error">{error}</div>;
-  if (!data) return <Empty text="عم نحمّل ملخص اليوم…" />;
+  if (!data) return <Empty text={t("عم نحمّل ملخص اليوم…")} />;
   return (
     <>
       <div className="stats">
         <Stat
-          label="الحاضرون الآن"
+          label={t("الحاضرون الآن")}
           value={data.present}
           suffix={`/ ${data.total}`}
           icon={<Users />}
           color="green"
         />
         <Stat
-          label="نسبة الحضور الآن"
+          label={t("نسبة الحضور الآن")}
           value={data.total ? Math.round((data.present / data.total) * 100) : 0}
           suffix="%"
           icon={<Check />}
           color="blue"
         />
         <Stat
-          label="انصرفوا اليوم"
+          label={t("انصرفوا اليوم")}
           value={data.left}
           icon={<ArrowUpLeft />}
           color="slate"
         />
         <Stat
-          label="أفراد الفريق"
+          label={t("أفراد الفريق")}
           value={data.total}
           icon={<Building2 />}
           color="violet"
@@ -687,19 +791,19 @@ function Dashboard({
         <section className="card">
           <div className="card-title">
             <div>
-              <h2>فريقك اليوم</h2>
-              <p>آخر حالة حضور لكل فرد ضمن نطاقك</p>
+              <h2>{t("فريقك اليوم")}</h2>
+              <p>{t("آخر حالة حضور لكل فرد ضمن نطاقك")}</p>
             </div>
-            <span className="badge green">مباشر</span>
+            <span className="badge green">{t("مباشر")}</span>
           </div>
           <div className="table-wrap">
             <table>
               <thead>
                 <tr>
-                  <th>عضو الفريق</th>
-                  <th>الفرع</th>
-                  <th>الدخول</th>
-                  <th>الحالة</th>
+                  <th>{t("عضو الفريق")}</th>
+                  <th>{t("الفرع")}</th>
+                  <th>{t("الدخول")}</th>
+                  <th>{t("الحالة")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -714,7 +818,7 @@ function Dashboard({
                         </div>
                       </div>
                     </td>
-                    <td>{m.branch ?? "غير معيّن"}</td>
+                    <td>{m.branch ?? t("غير معيّن")}</td>
                     <td className="number">{m.today ? time(m.in_at) : "—"}</td>
                     <td>
                       <span
@@ -723,7 +827,11 @@ function Dashboard({
                           (m.present ? "green" : m.today ? "slate" : "amber")
                         }
                       >
-                        {m.present ? "بالشغل" : m.today ? "انصرف" : "ما بلّش"}
+                        {m.present
+                          ? t("بالشغل")
+                          : m.today
+                            ? t("انصرف")
+                            : t("ما بلّش")}
                       </span>
                     </td>
                   </tr>
@@ -736,25 +844,28 @@ function Dashboard({
         <div className="side-cards">
           <section className="clock-card">
             <Clock3 size={38} />
-            <span>يومك إلو قيمة</span>
-            <h2>جاهز تبلّش؟</h2>
+            <span>{t("يومك إلو قيمة")}</span>
+            <h2>{t("جاهز تبلّش؟")}</h2>
             <p>
-              سجّل حضورك من الفرع،
+              {t("سجّل حضورك من الفرع،")}
               <br />
-              وخلّي دوامي يتابع الوقت.
+              {t("وخلّي دوامي يتابع الوقت.")}
             </p>
             <button onClick={() => setView("attendance")}>
-              افتح حضوري <ArrowUpLeft size={18} />
+              {t("افتح حضوري")}
+              <ArrowUpLeft size={18} />
             </button>
           </section>
           <section className="card compact">
             <span className="badge blue">
-              {me.company.status === "trial" ? "فترة تجريبية" : "اشتراك فعّال"}
+              {me.company.status === "trial"
+                ? t("فترة تجريبية")
+                : t("اشتراك فعّال")}
             </span>
             <h3>{me.company.name}</h3>
             <p>
-              متاح حتى{" "}
-              {new Date(me.company.ends_at).toLocaleDateString("ar-u-nu-latn")}
+              {t("متاح حتى")}{" "}
+              {new Date(me.company.ends_at).toLocaleDateString(locale)}
             </p>
             <div className="mini-line" />
           </section>
@@ -821,8 +932,12 @@ function Attendance({
         const gps = await new Promise<GeolocationPosition>((resolve, reject) =>
           navigator.geolocation.getCurrentPosition(
             resolve,
-            () => reject(new Error("اسمح بالوصول للموقع وجرّب مرة تانية")),
-            { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 },
+            () => reject(new Error(t("اسمح بالوصول للموقع وجرّب مرة تانية"))),
+            {
+              enableHighAccuracy: true,
+              timeout: 15000,
+              maximumAge: 0,
+            },
           ),
         );
         const payload = {
@@ -850,83 +965,92 @@ function Attendance({
           } catch (e) {
             if (e instanceof ApiError) {
               await localDB.operations.update(payload.id, {
-                state: "error",
+                state:
+                  e.status >= 500 || [401, 403, 429].includes(e.status)
+                    ? "pending"
+                    : "error",
                 message: e.message,
               });
               throw e;
             }
-            await localDB.operations.update(payload.id, { offline: true });
+            // Keep the submitted payload immutable: the server may have committed it before the response was lost.
+            await localDB.operations.update(payload.id, {
+              message: t("تعذّر تأكيد الإرسال. العملية محفوظة لإعادة المحاولة"),
+            });
           }
         }
         navigator.vibrate?.(80);
       },
       navigator.onLine
-        ? "تم إرسال عملية الحضور"
-        : "انحفظت العملية بانتظار المزامنة",
+        ? t("تم إرسال عملية الحضور")
+        : t("انحفظت العملية بانتظار المزامنة"),
     );
   return (
     <>
       <div className="two-col">
         <section className="card padded">
-          <h2>حضوري اليوم</h2>
-          <p>الموقع يُستخدم فقط وقت التسجيل.</p>
+          <h2>{t("حضوري اليوم")}</h2>
+          <p>{t("الموقع يُستخدم فقط وقت التسجيل.")}</p>
           <div className="timer" dir="ltr">
             {open
               ? new Date(now - open.in_at).toISOString().slice(11, 19)
               : "00:00:00"}
           </div>
-          <p>{open ? "وقت الجلسة الحالية" : "ما عندك جلسة مفتوحة"}</p>
+          <p>{open ? t("وقت الجلسة الحالية") : t("ما عندك جلسة مفتوحة")}</p>
           {!me.deviceBound ? (
             <>
-              <p>هذا الجهاز غير مربوط بعضويتك.</p>
+              <p>{t("هذا الجهاز غير مربوط بعضويتك.")}</p>
               <button
                 disabled={busy}
                 onClick={() =>
-                  void act(() => api("/device/bind", {}), "تم ربط الجهاز")
+                  void act(() => api("/device/bind", {}), t("تم ربط الجهاز"))
                 }
               >
-                ربط الجهاز لأول مرة
+                {t("ربط الجهاز لأول مرة")}
               </button>
               <form
                 onSubmit={(e) => {
                   e.preventDefault();
                   const f = new FormData(e.currentTarget);
                   void act(
-                    () => api("/device/rebind", { reason: f.get("reason") }),
-                    "تم إرسال طلب إعادة الربط",
+                    () =>
+                      api("/device/rebind", {
+                        reason: f.get("reason"),
+                      }),
+                    t("تم إرسال طلب إعادة الربط"),
                   );
                 }}
               >
-                <Field label="سبب إعادة الربط">
+                <Field label={t("سبب إعادة الربط")}>
                   <input name="reason" required minLength={3} />
                 </Field>
                 <button className="secondary" disabled={busy}>
-                  طلب إعادة ربط
+                  {t("طلب إعادة ربط")}
                 </button>
               </form>
             </>
           ) : (
             <div className="punch-buttons">
               <button
-                disabled={busy || !!open}
+                disabled={busy || (navigator.onLine && !!open)}
                 onClick={() => void perform("in")}
               >
-                تسجيل دخول
+                {t("تسجيل دخول")}
               </button>
               <button
-                disabled={busy || !open}
+                disabled={busy || (navigator.onLine && !open)}
                 className="secondary"
                 onClick={() => void perform("out")}
               >
-                تسجيل خروج
+                {t("تسجيل خروج")}
               </button>
             </div>
           )}
           <p className="error">{error}</p>
         </section>
         <section className="card padded">
-          <h2>حالة المزامنة</h2>
-          <p>كل عملية مرتبطة بشركتك الحالية فقط.</p>
+          <h2>{t("حالة المزامنة")}</h2>
+          <p>{t("كل عملية مرتبطة بشركتك الحالية فقط.")}</p>
           {ops.length ? (
             ops
               .slice(-8)
@@ -935,25 +1059,25 @@ function Attendance({
                 <div className="list-row" key={o.id}>
                   <div>
                     <strong>
-                      {o.action === "in" ? "دخول" : "خروج"} ·{" "}
+                      {o.action === "in" ? t("دخول") : t("خروج")} ·{" "}
                       {time(o.deviceTime)}
                     </strong>
-                    <small>{o.message}</small>
+                    <small>{t(o.message || "")}</small>
                   </div>
                   <span className="badge slate">
                     {
                       {
-                        pending: "بانتظار المزامنة",
-                        accepted: "مقبول",
-                        review: "للمراجعة",
-                        error: "تعذّر الاعتماد",
+                        pending: t("بانتظار المزامنة"),
+                        accepted: t("مقبول"),
+                        review: t("للمراجعة"),
+                        error: t("تعذّر الاعتماد"),
                       }[o.state]
                     }
                   </span>
                 </div>
               ))
           ) : (
-            <Empty text="كل شي محدّث" />
+            <Empty text={t("كل شي محدّث")} />
           )}
           <button
             className="secondary"
@@ -961,28 +1085,28 @@ function Attendance({
             onClick={() =>
               void act(
                 () => syncQueue(me.member.company_id, me.member.id),
-                "تمت محاولة المزامنة",
+                t("تمت محاولة المزامنة"),
               )
             }
           >
-            مزامنة الآن
+            {t("مزامنة الآن")}
           </button>
         </section>
       </div>
       <section className="card">
         <div className="card-title">
-          <h2>جلساتي الأخيرة</h2>
+          <h2>{t("جلساتي الأخيرة")}</h2>
         </div>
         {data?.items.length ? (
           <div className="table-wrap">
             <table>
               <thead>
                 <tr>
-                  <th>التاريخ</th>
-                  <th>الفرع</th>
-                  <th>الدخول</th>
-                  <th>الخروج</th>
-                  <th>المدة</th>
+                  <th>{t("التاريخ")}</th>
+                  <th>{t("الفرع")}</th>
+                  <th>{t("الدخول")}</th>
+                  <th>{t("الخروج")}</th>
+                  <th>{t("المدة")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -993,7 +1117,8 @@ function Attendance({
                     <td>{time(s.in_at)}</td>
                     <td>{time(s.out_at)}</td>
                     <td>
-                      {Math.floor(((s.out_at ?? now) - s.in_at) / 60000)} دقيقة
+                      {Math.floor(((s.out_at ?? now) - s.in_at) / 60000)}
+                      {t("دقيقة")}
                     </td>
                   </tr>
                 ))}
@@ -1026,7 +1151,7 @@ function Branches({
     <>
       <div className="two-col">
         <section className="card padded">
-          <h2>الفروع ونطاق الحضور</h2>
+          <h2>{t("الفروع ونطاق الحضور")}</h2>
           {data?.items.map((b: any) => (
             <button
               className="choice"
@@ -1034,13 +1159,18 @@ function Branches({
               onClick={() => setSelected(b)}
             >
               <span>{b.name}</span>
-              <span>{b.radius} م · عرض الموقع</span>
+              <span>
+                {b.radius}
+                {t("م · عرض الموقع")}
+              </span>
             </button>
           ))}
-          {!data?.items.length && <Empty text="أضف أول فرع لتسجيل الحضور" />}
+          {!data?.items.length && (
+            <Empty text={t("أضف أول فرع لتسجيل الحضور")} />
+          )}
           {selected && (
-            <Suspense fallback={<Empty text="عم نحمّل الخريطة…" />}>
-              <MapView
+            <Suspense fallback={<Empty text={t("عم نحمّل الخريطة…")} />}>
+              <OptionalMap
                 lat={selected.lat}
                 lng={selected.lng}
                 radius={selected.radius}
@@ -1050,7 +1180,7 @@ function Branches({
         </section>
         {manage && (
           <section className="card padded">
-            <h2>إضافة فرع</h2>
+            <h2>{t("إضافة فرع")}</h2>
             <form
               onSubmit={(e) => {
                 e.preventDefault();
@@ -1065,11 +1195,11 @@ function Branches({
                 );
               }}
             >
-              <Field label="اسم الفرع">
+              <Field label={t("اسم الفرع")}>
                 <input name="name" required minLength={2} />
               </Field>
               <div className="two-col">
-                <Field label="خط العرض">
+                <Field label={t("خط العرض")}>
                   <input
                     name="lat"
                     type="number"
@@ -1080,7 +1210,7 @@ function Branches({
                     defaultValue="33.5138"
                   />
                 </Field>
-                <Field label="خط الطول">
+                <Field label={t("خط الطول")}>
                   <input
                     name="lng"
                     type="number"
@@ -1092,7 +1222,7 @@ function Branches({
                   />
                 </Field>
               </div>
-              <Field label="نطاق الحضور بالمتر">
+              <Field label={t("نطاق الحضور بالمتر")}>
                 <input
                   name="radius"
                   type="number"
@@ -1102,13 +1232,13 @@ function Branches({
                   required
                 />
               </Field>
-              <button disabled={busy}>حفظ الفرع</button>
+              <button disabled={busy}>{t("حفظ الفرع")}</button>
             </form>
           </section>
         )}
       </div>
       <section className="card padded">
-        <h2>الأقسام</h2>
+        <h2>{t("الأقسام")}</h2>
         <div className="chips">
           {departments.data?.items.map((d: any) => (
             <span key={d.id} className="badge blue">
@@ -1122,13 +1252,17 @@ function Branches({
             onSubmit={(e) => {
               e.preventDefault();
               const f = new FormData(e.currentTarget);
-              void act(() => api("/departments", { name: f.get("name") }));
+              void act(() =>
+                api("/departments", {
+                  name: f.get("name"),
+                }),
+              );
             }}
           >
-            <Field label="اسم القسم الجديد">
+            <Field label={t("اسم القسم الجديد")}>
               <input name="name" required minLength={2} />
             </Field>
-            <button disabled={busy}>إضافة قسم</button>
+            <button disabled={busy}>{t("إضافة قسم")}</button>
           </form>
         )}
       </section>
@@ -1157,21 +1291,22 @@ function Members({
     <>
       <section className="card">
         <div className="card-title">
-          <h2>فريق العمل</h2>
+          <h2>{t("فريق العمل")}</h2>
           <span className="badge blue">
-            {members.data?.items.length ?? 0} عضو
+            {members.data?.items.length ?? 0}
+            {t("عضو")}
           </span>
         </div>
         <div className="table-wrap">
           <table>
             <thead>
               <tr>
-                <th>الاسم</th>
-                <th>الهاتف</th>
-                <th>الدور</th>
-                <th>الفرع</th>
-                <th>الحالة</th>
-                <th>إدارة</th>
+                <th>{t("الاسم")}</th>
+                <th>{t("الهاتف")}</th>
+                <th>{t("الدور")}</th>
+                <th>{t("الفرع")}</th>
+                <th>{t("الحالة")}</th>
+                <th>{t("إدارة")}</th>
               </tr>
             </thead>
             <tbody>
@@ -1180,19 +1315,19 @@ function Members({
                   <td>{m.name}</td>
                   <td dir="ltr">{m.phone}</td>
                   <td>{roles[m.role]}</td>
-                  <td>{m.branch ?? "غير معيّن"}</td>
+                  <td>{m.branch ?? t("غير معيّن")}</td>
                   <td>
                     <span className="badge slate">
                       {m.status === "invited"
-                        ? "دعوة معلقة"
+                        ? t("دعوة معلقة")
                         : m.bound
-                          ? "جهاز مربوط"
-                          : "بانتظار الربط"}
+                          ? t("جهاز مربوط")
+                          : t("بانتظار الربط")}
                     </span>
                   </td>
                   <td>
                     <button className="text-button" onClick={() => setReset(m)}>
-                      إدارة
+                      {t("إدارة")}
                     </button>
                   </td>
                 </tr>
@@ -1203,7 +1338,10 @@ function Members({
       </section>
       {reset && (
         <section className="card padded">
-          <h2>إدارة {reset.name}</h2>
+          <h2>
+            {t("إدارة")}
+            {reset.name}
+          </h2>
           <form
             onSubmit={(e) => {
               e.preventDefault();
@@ -1214,23 +1352,23 @@ function Members({
                     pin: f.get("pin"),
                     reason: f.get("reason"),
                   }),
-                `أعط العامل رمز الشركة: ${me.company.id}`,
+                t("أعط العامل رمز الشركة: {0}", [me.company.id]),
               );
             }}
           >
-            <Field label="PIN مؤقت جديد">
+            <Field label={t("PIN مؤقت جديد")}>
               <input name="pin" type="password" minLength={8} required />
             </Field>
-            <Field label="سبب إعادة التعيين">
+            <Field label={t("سبب إعادة التعيين")}>
               <input name="reason" minLength={3} required />
             </Field>
-            <button disabled={busy}>إعادة تعيين ضمن هذه الشركة</button>
+            <button disabled={busy}>{t("إعادة تعيين ضمن هذه الشركة")}</button>
             <button
               type="button"
               className="ghost"
               onClick={() => setReset(null)}
             >
-              إغلاق
+              {t("إغلاق")}
             </button>
           </form>
           {me.member.role === "gm" && (
@@ -1247,8 +1385,8 @@ function Members({
                 );
               }}
             >
-              <h3>تعيين الفرع والقسم</h3>
-              <Field label="الفرع">
+              <h3>{t("تعيين الفرع والقسم")}</h3>
+              <Field label={t("الفرع")}>
                 <select name="branchId" required>
                   {branches.data?.items.map((b: any) => (
                     <option key={b.id} value={b.id}>
@@ -1257,9 +1395,9 @@ function Members({
                   ))}
                 </select>
               </Field>
-              <Field label="القسم">
+              <Field label={t("القسم")}>
                 <select name="departmentId">
-                  <option value="">بدون قسم</option>
+                  <option value="">{t("بدون قسم")}</option>
                   {departments.data?.items.map((d: any) => (
                     <option key={d.id} value={d.id}>
                       {d.name}
@@ -1267,10 +1405,10 @@ function Members({
                   ))}
                 </select>
               </Field>
-              <Field label="السبب">
+              <Field label={t("السبب")}>
                 <input name="reason" required minLength={3} />
               </Field>
-              <button disabled={busy}>حفظ التعيين</button>
+              <button disabled={busy}>{t("حفظ التعيين")}</button>
             </form>
           )}
         </section>
@@ -1278,7 +1416,7 @@ function Members({
       {canCreate && (
         <div className="two-col">
           <section className="card padded">
-            <h2>إضافة عضو للفريق</h2>
+            <h2>{t("إضافة عضو للفريق")}</h2>
             <form
               onSubmit={(e) => {
                 e.preventDefault();
@@ -1293,14 +1431,14 @@ function Members({
                       branchId: f.get("branchId"),
                       departmentId: f.get("departmentId") || null,
                     }),
-                  "تم إنشاء العضوية؛ الهوية الموجودة تستقبل دعوة",
+                  t("تم إنشاء العضوية؛ الهوية الموجودة تستقبل دعوة"),
                 );
               }}
             >
-              <Field label="الاسم الكامل">
+              <Field label={t("الاسم الكامل")}>
                 <input name="name" minLength={2} required />
               </Field>
-              <Field label="رقم الموبايل">
+              <Field label={t("رقم الموبايل")}>
                 <input
                   name="phone"
                   type="tel"
@@ -1309,10 +1447,10 @@ function Members({
                   required
                 />
               </Field>
-              <Field label="PIN أولي للهوية الجديدة فقط">
+              <Field label={t("PIN أولي للهوية الجديدة فقط")}>
                 <input name="pin" type="password" minLength={8} required />
               </Field>
-              <Field label="الدور">
+              <Field label={t("الدور")}>
                 <select name="role" defaultValue="worker">
                   {Object.entries(roles)
                     .filter(([k]) => me.member.role === "gm" || k === "worker")
@@ -1323,7 +1461,7 @@ function Members({
                     ))}
                 </select>
               </Field>
-              <Field label="الفرع">
+              <Field label={t("الفرع")}>
                 <select name="branchId" required>
                   {branches.data?.items.map((b: any) => (
                     <option key={b.id} value={b.id}>
@@ -1332,9 +1470,9 @@ function Members({
                   ))}
                 </select>
               </Field>
-              <Field label="القسم">
+              <Field label={t("القسم")}>
                 <select name="departmentId">
-                  <option value="">بدون قسم</option>
+                  <option value="">{t("بدون قسم")}</option>
                   {departments.data?.items.map((d: any) => (
                     <option key={d.id} value={d.id}>
                       {d.name}
@@ -1342,17 +1480,18 @@ function Members({
                   ))}
                 </select>
               </Field>
-              <button disabled={busy}>إضافة العضو</button>
+              <button disabled={busy}>{t("إضافة العضو")}</button>
             </form>
           </section>
           <section className="card padded">
-            <h2>استيراد العمال من Excel</h2>
+            <h2>{t("استيراد العمال من Excel")}</h2>
             <p>
-              الأعمدة: الاسم، الهاتف، الفرع، القسم. راجع المعاينة قبل الحفظ.
-              الحساب الموجود عالمياً تصله دعوة.
+              {t(
+                "الأعمدة: الاسم، الهاتف، الفرع، القسم. راجع المعاينة قبل الحفظ. الحساب الموجود عالمياً تصله دعوة.",
+              )}
             </p>
             <input
-              aria-label="ملف Excel"
+              aria-label={t("ملف Excel")}
               type="file"
               accept=".xlsx"
               onChange={async (e) => {
@@ -1361,16 +1500,20 @@ function Members({
                   const file = e.target.files?.[0];
                   if (!file) return;
                   if (file.size > 2_000_000)
-                    throw new Error("الملف أكبر من 2 ميغابايت");
+                    throw new Error(t("الملف أكبر من 2 ميغابايت"));
                   const { readSheet: readXlsxFile } =
                     await import("read-excel-file/browser");
                   const all = await readXlsxFile(file);
-                  if (all.length > 201) throw new Error("حتى 200 عامل لكل ملف");
+                  if (all.length > 201)
+                    throw new Error(t("حتى 200 عامل لكل ملف"));
                   if (
-                    all[0]?.slice(0, 4).join("|") !== "الاسم|الهاتف|الفرع|القسم"
+                    ![
+                      "الاسم|الهاتف|الفرع|القسم",
+                      "Name|Phone|Branch|Department",
+                    ].includes(all[0]?.slice(0, 4).join("|") ?? "")
                   )
                     throw new Error(
-                      "رتّب الأعمدة: الاسم، الهاتف، الفرع، القسم",
+                      t("رتّب الأعمدة: الاسم، الهاتف، الفرع، القسم"),
                     );
                   const seen = new Set<string>();
                   setRows(
@@ -1383,18 +1526,18 @@ function Members({
                           (d: any) => d.name === String(row[3] ?? ""),
                         );
                       const error = !/^\+[1-9]\d{7,14}$/.test(phone)
-                        ? "الهاتف غير صحيح"
+                        ? t("الهاتف غير صحيح")
                         : seen.has(phone) ||
                             members.data?.items.some(
                               (m: any) => m.phone === phone,
                             )
-                          ? "رقم مكرر"
+                          ? t("رقم مكرر")
                           : !branch
-                            ? "الفرع غير معروف"
+                            ? t("الفرع غير معروف")
                             : row[3] && !department
-                              ? "القسم غير معروف"
+                              ? t("القسم غير معروف")
                               : String(row[0] ?? "").length < 2
-                                ? "الاسم غير صحيح"
+                                ? t("الاسم غير صحيح")
                                 : "";
                       seen.add(phone);
                       return {
@@ -1419,7 +1562,8 @@ function Members({
                 <div>
                   <strong>{r.name}</strong>
                   <small>
-                    {r.phone} · {r.error || (r.saved ? "تمت الإضافة" : "جاهز")}
+                    {r.phone} ·{" "}
+                    {r.error || (r.saved ? t("تمت الإضافة") : t("جاهز"))}
                   </small>
                 </div>
                 <span>{r.saved ? "✓" : ""}</span>
@@ -1428,8 +1572,9 @@ function Members({
             {rows.length > 0 && (
               <>
                 <p>
-                  احفظ بيانات PIN المؤقتة بعد الإضافة لتسليمها للعامل بأمان. لا
-                  تُرسل عبر إشعارات.
+                  {t(
+                    "احفظ بيانات PIN المؤقتة بعد الإضافة لتسليمها للعامل بأمان. لا تُرسل عبر إشعارات.",
+                  )}
                 </p>
                 <button
                   disabled={busy || rows.some((r) => r.error)}
@@ -1437,17 +1582,20 @@ function Members({
                     void act(async () => {
                       for (let i = 0; i < rows.length; i++) {
                         if (rows[i].saved) continue;
-                        await api("/members", { ...rows[i], role: "worker" });
+                        await api("/members", {
+                          ...rows[i],
+                          role: "worker",
+                        });
                         rows[i].saved = true;
                         setRows([...rows]);
                       }
-                    }, "تم الاستيراد")
+                    }, t("تم الاستيراد"))
                   }
                 >
-                  اعتماد الاستيراد
+                  {t("اعتماد الاستيراد")}
                 </button>
                 <details>
-                  <summary>PIN المؤقت لكل صف</summary>
+                  <summary>{t("PIN المؤقت لكل صف")}</summary>
                   {rows.map((r, i) => (
                     <p key={i}>
                       {r.name}: <code>{r.pin}</code>
@@ -1473,7 +1621,19 @@ function CompanySettings({
 }) {
   return (
     <section className="card padded narrow">
-      <h2>إعدادات شركتك</h2>
+      <h2>{t("إعدادات شركتك")}</h2>
+      <Field label={t("شعار الشركة (PNG أو JPEG)")}>
+        <input
+          type="file"
+          accept="image/png,image/jpeg"
+          disabled={busy}
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) void act(() => uploadLogo(file), t("تم تحديث الشعار"));
+            e.target.value = "";
+          }}
+        />
+      </Field>
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -1493,7 +1653,7 @@ function CompanySettings({
           );
         }}
       >
-        <Field label="اسم الشركة">
+        <Field label={t("اسم الشركة")}>
           <input
             name="name"
             defaultValue={me.company.name}
@@ -1501,13 +1661,13 @@ function CompanySettings({
             minLength={2}
           />
         </Field>
-        <Field label="العملة">
+        <Field label={t("العملة")}>
           <CurrencySelect value={me.company.currency} />
         </Field>
-        <Field label="المنطقة الزمنية">
+        <Field label={t("المنطقة الزمنية")}>
           <input name="timezone" defaultValue={me.company.timezone} required />
         </Field>
-        <Field label="مدة الجلسة بالأيام">
+        <Field label={t("مدة الجلسة بالأيام")}>
           <input
             name="sessionDays"
             type="number"
@@ -1516,7 +1676,7 @@ function CompanySettings({
             defaultValue={me.company.session_days}
           />
         </Field>
-        <Field label="أعلى خطأ مسموح لدقة GPS بالمتر">
+        <Field label={t("أعلى خطأ مسموح لدقة GPS بالمتر")}>
           <input
             name="gpsAccuracy"
             type="number"
@@ -1525,9 +1685,9 @@ function CompanySettings({
             defaultValue={me.company.gps_accuracy}
           />
         </Field>
-        <button disabled={busy}>حفظ الإعدادات</button>
+        <button disabled={busy}>{t("حفظ الإعدادات")}</button>
       </form>
-      <small>رمز الشركة للدخول المؤقت:</small>
+      <small>{t("رمز الشركة للدخول المؤقت:")}</small>
       <p dir="ltr">
         <code>{me.company.id}</code>
       </p>
@@ -1536,33 +1696,39 @@ function CompanySettings({
 }
 function Notifications({ revision, act }: { revision: number; act: Action }) {
   const { data, error } = useData("/notifications", revision),
-    [location, setLocation] = useState<{ lat: number; lng: number } | null>(
-      null,
-    );
+    [location, setLocation] = useState<{
+      lat: number;
+      lng: number;
+    } | null>(null);
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get("view") === "location") {
       const lat = Number(params.get("lat")),
         lng = Number(params.get("lng"));
       if (Number.isFinite(lat) && Number.isFinite(lng))
-        setLocation({ lat, lng });
+        setLocation({
+          lat,
+          lng,
+        });
     }
   }, []);
   return (
     <section className="card padded">
       <div className="card-title">
-        <h2>مركز الإشعارات</h2>
+        <h2>{t("مركز الإشعارات")}</h2>
         <button
           className="secondary"
           onClick={() =>
             void act(async () => {
               if (!("serviceWorker" in navigator) || !("PushManager" in window))
                 throw new Error(
-                  "هالمتصفح لا يدعم الإشعارات. على iPhone أضف التطبيق للشاشة الرئيسية",
+                  t(
+                    "هالمتصفح لا يدعم الإشعارات. على iPhone أضف التطبيق للشاشة الرئيسية",
+                  ),
                 );
               const config = await api("/public/config");
               if (!config.vapidPublicKey)
-                throw new Error("مفاتيح push لم تُجهز على الخادم بعد");
+                throw new Error(t("مفاتيح push لم تُجهز على الخادم بعد"));
               const registration = await navigator.serviceWorker.ready;
               const raw = atob(
                 config.vapidPublicKey.replace(/-/g, "+").replace(/_/g, "/"),
@@ -1573,16 +1739,16 @@ function Notifications({ revision, act }: { revision: number; act: Action }) {
                 applicationServerKey: key,
               });
               await api("/push/subscribe", subscription.toJSON());
-            }, "تم تفعيل الإشعارات")
+            }, t("تم تفعيل الإشعارات"))
           }
         >
-          تفعيل إشعارات الجهاز
+          {t("تفعيل إشعارات الجهاز")}
         </button>
       </div>
       <p className="error">{error}</p>
       {location && (
         <Suspense fallback={<Empty />}>
-          <MapView {...location} />
+          <OptionalMap {...location} />
         </Suspense>
       )}
       {data?.items.length ? (
@@ -1599,7 +1765,7 @@ function Notifications({ revision, act }: { revision: number; act: Action }) {
                     lat: Number(p.get("lat")),
                     lng: Number(p.get("lng")),
                   });
-              }, "تمت قراءة الإشعار")
+              }, t("تمت قراءة الإشعار"))
             }
           >
             <span className={"stat-icon " + (n.read_at ? "slate" : "blue")}>
@@ -1613,7 +1779,101 @@ function Notifications({ revision, act }: { revision: number; act: Action }) {
           </button>
         ))
       ) : (
-        <Empty text="الإشعارات الجديدة بتظهر هون" />
+        <Empty text={t("الإشعارات الجديدة بتظهر هون")} />
+      )}
+    </section>
+  );
+}
+function AttendanceReviews({
+  revision,
+  act,
+  busy,
+}: {
+  revision: number;
+  act: Action;
+  busy: boolean;
+}) {
+  const { data, error } = useData("/attendance/reviews", revision);
+  return (
+    <section className="card padded">
+      <h2>{t("مراجعة أحداث الحضور")}</h2>
+      <p>
+        {t(
+          "راجع وقت الجهاز والموقع، واحسم الدخول قبل الخروج. الحدث لا يدخل بساعات العمل قبل اعتماده.",
+        )}
+      </p>
+      <p className="error" role="alert">
+        {error}
+      </p>
+      {data?.items.length ? (
+        data.items.map((r: any) => (
+          <form
+            key={r.id}
+            className="card padded"
+            onSubmit={(e) => {
+              e.preventDefault();
+              const f = new FormData(e.currentTarget);
+              const decision = (
+                e.nativeEvent as SubmitEvent
+              ).submitter?.getAttribute("value");
+              void act(
+                () =>
+                  api("/attendance/reviews/" + r.id, {
+                    decision,
+                    reason: f.get("reason"),
+                  }),
+                t("تم حفظ قرار المراجعة"),
+              );
+            }}
+          >
+            <h3>
+              {r.name} · {r.payload.action === "in" ? t("دخول") : t("خروج")}
+            </h3>
+            <p>
+              {r.branch} — {t(r.result.reason)}
+            </p>
+            <p>
+              {t("وقت الجهاز:")}{" "}
+              <time>
+                {new Date(r.payload.deviceTime).toLocaleString(locale)}
+              </time>
+              <br />
+              {t("وقت الاستلام:")}{" "}
+              {new Date(r.received_at).toLocaleString(locale)}
+            </p>
+            <p>
+              {t("الموقع:")}{" "}
+              <bdi>
+                {r.payload.lat}, {r.payload.lng}
+              </bdi>{" "}
+              {t("· دقة ±")}
+              {r.payload.accuracy}
+              {t("م")}
+            </p>
+            <Field label={t("سبب القرار")}>
+              <input
+                name="reason"
+                required
+                minLength={5}
+                maxLength={500}
+                placeholder={t("اذكر كيف تحققت من الحدث")}
+              />
+            </Field>
+            <button type="submit" value="approve" disabled={busy}>
+              {t("اعتماد الحدث")}
+            </button>{" "}
+            <button
+              className="ghost"
+              type="submit"
+              value="reject"
+              disabled={busy}
+            >
+              {t("رفض الحدث")}
+            </button>
+          </form>
+        ))
+      ) : (
+        <Empty />
       )}
     </section>
   );
@@ -1622,7 +1882,7 @@ function Devices({ revision, act }: { revision: number; act: Action }) {
   const { data, error } = useData("/device/requests", revision);
   return (
     <section className="card padded">
-      <h2>طلبات إعادة ربط الأجهزة</h2>
+      <h2>{t("طلبات إعادة ربط الأجهزة")}</h2>
       <p className="error">{error}</p>
       {data?.items.length ? (
         data.items.map((r: any) => (
@@ -1636,7 +1896,7 @@ function Devices({ revision, act }: { revision: number; act: Action }) {
                 void act(() => api(`/device/requests/${r.id}/approve`, {}))
               }
             >
-              موافقة
+              {t("موافقة")}
             </button>
           </div>
         ))
@@ -1651,24 +1911,24 @@ function Audit({ revision }: { revision: number }) {
   return (
     <section className="card">
       <div className="card-title">
-        <h2>سجل الرقابة</h2>
-        <span className="badge blue">قراءة فقط · المدير العام</span>
+        <h2>{t("سجل الرقابة")}</h2>
+        <span className="badge blue">{t("قراءة فقط · المدير العام")}</span>
       </div>
       <p className="error">{error}</p>
       <div className="table-wrap">
         <table>
           <thead>
             <tr>
-              <th>الوقت</th>
-              <th>العملية</th>
-              <th>الفاعل</th>
-              <th>السبب</th>
+              <th>{t("الوقت")}</th>
+              <th>{t("العملية")}</th>
+              <th>{t("الفاعل")}</th>
+              <th>{t("السبب")}</th>
             </tr>
           </thead>
           <tbody>
             {data?.items.map((a: any) => (
               <tr key={a.id}>
-                <td>{new Date(a.created_at).toLocaleString("ar-u-nu-latn")}</td>
+                <td>{new Date(a.created_at).toLocaleString(locale)}</td>
                 <td>
                   <code>{a.action}</code>
                 </td>
@@ -1688,13 +1948,13 @@ function Owner({ revision, act }: { revision: number; act: Action }) {
     <>
       <div className="stats">
         <Stat
-          label="الشركات"
+          label={t("الشركات")}
           value={data?.items.length ?? 0}
           icon={<Building2 />}
           color="blue"
         />
         <Stat
-          label="بالتجربة"
+          label={t("بالتجربة")}
           value={
             data?.items.filter(
               (c: any) => c.status === "trial" && c.ends_at > Date.now(),
@@ -1706,19 +1966,19 @@ function Owner({ revision, act }: { revision: number; act: Action }) {
       </div>
       <section className="card">
         <div className="card-title">
-          <h2>دليل الشركات</h2>
-          <small>التفعيل بعد الدفع خارج التطبيق</small>
+          <h2>{t("دليل الشركات")}</h2>
+          <small>{t("التفعيل بعد الدفع خارج التطبيق")}</small>
         </div>
         <p className="error">{error}</p>
         <div className="table-wrap">
           <table>
             <thead>
               <tr>
-                <th>الشركة</th>
-                <th>العمال</th>
-                <th>الحالة</th>
-                <th>نهاية الاشتراك</th>
-                <th>إدارة الاشتراك</th>
+                <th>{t("الشركة")}</th>
+                <th>{t("العمال")}</th>
+                <th>{t("الحالة")}</th>
+                <th>{t("نهاية الاشتراك")}</th>
+                <th>{t("إدارة الاشتراك")}</th>
               </tr>
             </thead>
             <tbody>
@@ -1729,31 +1989,29 @@ function Owner({ revision, act }: { revision: number; act: Action }) {
                   <td>
                     <span className="badge slate">
                       {co.status === "suspended"
-                        ? "موقوف"
+                        ? t("موقوف")
                         : co.ends_at < Date.now()
-                          ? "منتهي"
+                          ? t("منتهي")
                           : co.status === "trial"
-                            ? "تجريبي"
-                            : "فعال"}
+                            ? t("تجريبي")
+                            : t("فعال")}
                     </span>
                   </td>
-                  <td>
-                    {new Date(co.ends_at).toLocaleDateString("ar-u-nu-latn")}
-                  </td>
+                  <td>{new Date(co.ends_at).toLocaleDateString(locale)}</td>
                   <td>
                     <div className="actions">
                       {[
-                        ["month", "شهر"],
-                        ["year", "سنة"],
-                        ["trial", "تجربة"],
-                        ["suspend", "إيقاف"],
+                        ["month", t("شهر")],
+                        ["year", t("سنة")],
+                        ["trial", t("تجربة")],
+                        ["suspend", t("إيقاف")],
                       ].map(([action, label]) => (
                         <button
                           className="secondary"
                           key={action}
                           onClick={() => {
                             const reason = prompt(
-                              "سبب التفعيل أو الإيقاف (للتدقيق)",
+                              t("سبب التفعيل أو الإيقاف (للتدقيق)"),
                             );
                             if (reason)
                               void act(() =>
@@ -1774,7 +2032,9 @@ function Owner({ revision, act }: { revision: number; act: Action }) {
             </tbody>
           </table>
         </div>
-        {!data?.items.length && <Empty text="أول شركة بتسجّل رح تظهر هون" />}
+        {!data?.items.length && (
+          <Empty text={t("أول شركة بتسجّل رح تظهر هون")} />
+        )}
       </section>
     </>
   );
@@ -1791,7 +2051,7 @@ function OwnerSettings({
   const { data } = useData("/owner/companies", revision);
   return (
     <section className="card padded narrow">
-      <h2>التجربة والأسعار</h2>
+      <h2>{t("التجربة والأسعار")}</h2>
       {data && (
         <form
           key={revision}
@@ -1811,7 +2071,7 @@ function OwnerSettings({
             );
           }}
         >
-          <Field label="مدة التجربة بالأيام">
+          <Field label={t("مدة التجربة بالأيام")}>
             <input
               name="trialDays"
               type="number"
@@ -1820,7 +2080,7 @@ function OwnerSettings({
               defaultValue={data.settings?.trial_days ?? 14}
             />
           </Field>
-          <Field label="السعر الشهري (بوحدة التسعير المتفق عليها)">
+          <Field label={t("السعر الشهري (بوحدة التسعير المتفق عليها)")}>
             <input
               name="monthly"
               type="number"
@@ -1828,7 +2088,7 @@ function OwnerSettings({
               defaultValue={data.settings?.monthly ?? 0}
             />
           </Field>
-          <Field label="السعر السنوي">
+          <Field label={t("السعر السنوي")}>
             <input
               name="yearly"
               type="number"
@@ -1836,10 +2096,10 @@ function OwnerSettings({
               defaultValue={data.settings?.yearly ?? 0}
             />
           </Field>
-          <button disabled={busy}>حفظ</button>
+          <button disabled={busy}>{t("حفظ")}</button>
         </form>
       )}
-      <p>الأسعار للتسجيل فقط؛ لا تحصيل إلكتروني.</p>
+      <p>{t("الأسعار للتسجيل فقط؛ لا تحصيل إلكتروني.")}</p>
     </section>
   );
 }
@@ -1860,7 +2120,7 @@ function OwnerRecovery({
     <>
       <div className="two-col">
         <section className="card padded">
-          <h2>استعادة دخول مدير عام ضمن شركته</h2>
+          <h2>{t("استعادة دخول مدير عام ضمن شركته")}</h2>
           <form
             onSubmit={(e) => {
               e.preventDefault();
@@ -1874,7 +2134,7 @@ function OwnerRecovery({
               );
             }}
           >
-            <Field label="الشركة">
+            <Field label={t("الشركة")}>
               <select
                 required
                 value={companyId}
@@ -1885,7 +2145,7 @@ function OwnerRecovery({
                   );
                 }}
               >
-                <option value="">اختار الشركة</option>
+                <option value="">{t("اختار الشركة")}</option>
                 {companies.data?.items.map((c: any) => (
                   <option key={c.id} value={c.id}>
                     {c.name}
@@ -1893,7 +2153,7 @@ function OwnerRecovery({
                 ))}
               </select>
             </Field>
-            <Field label="المدير">
+            <Field label={t("المدير")}>
               <select name="membershipId" required>
                 {managers.map((m) => (
                   <option key={m.id} value={m.id}>
@@ -1902,21 +2162,22 @@ function OwnerRecovery({
                 ))}
               </select>
             </Field>
-            <Field label="PIN المؤقت">
+            <Field label={t("PIN المؤقت")}>
               <input name="pin" type="password" minLength={8} required />
             </Field>
-            <Field label="سبب التحقق وإعادة التعيين">
+            <Field label={t("سبب التحقق وإعادة التعيين")}>
               <input name="reason" minLength={5} required />
             </Field>
-            <button disabled={busy}>إعادة التعيين</button>
+            <button disabled={busy}>{t("إعادة التعيين")}</button>
           </form>
           {companyId && <p dir="ltr">{companyId}</p>}
         </section>
         <section className="card padded">
-          <h2>استعادة الهوية العامة</h2>
+          <h2>{t("استعادة الهوية العامة")}</h2>
           <p>
-            بعد التحقق اليدوي من صاحب الهوية. تؤثر على الدخول العام لكل الشركات.
-            لا ترفع وثائق هوية.
+            {t(
+              "بعد التحقق اليدوي من صاحب الهوية. تؤثر على الدخول العام لكل الشركات. لا ترفع وثائق هوية.",
+            )}
           </p>
           <form
             onSubmit={(e) => {
@@ -1931,25 +2192,27 @@ function OwnerRecovery({
               );
             }}
           >
-            <Field label="رقم الهاتف">
+            <Field label={t("رقم الهاتف")}>
               <input name="phone" type="tel" required dir="ltr" />
             </Field>
-            <Field label="PIN المؤقت">
+            <Field label={t("PIN المؤقت")}>
               <input name="pin" type="password" minLength={8} required />
             </Field>
-            <Field label="كيف تحققت من الهوية؟">
+            <Field label={t("كيف تحققت من الهوية؟")}>
               <textarea name="reason" minLength={10} required />
             </Field>
             <label className="check-label">
               <input type="checkbox" required />
-              تحققت من صاحب الحساب شخصياً
+              {t("تحققت من صاحب الحساب شخصياً")}
             </label>
-            <button disabled={busy}>استعادة الهوية وتسجيل العملية</button>
+            <button disabled={busy}>
+              {t("استعادة الهوية وتسجيل العملية")}
+            </button>
           </form>
         </section>
       </div>
       <section className="card padded">
-        <h2>إعادة ربط أجهزة المدراء العامين</h2>
+        <h2>{t("إعادة ربط أجهزة المدراء العامين")}</h2>
         {rebinds.data?.items.map((r: any) => (
           <div className="list-row" key={r.id}>
             <div>
@@ -1963,7 +2226,7 @@ function OwnerRecovery({
                 void act(() => api(`/owner/rebinds/${r.id}/approve`, {}))
               }
             >
-              موافقة
+              {t("موافقة")}
             </button>
           </div>
         ))}

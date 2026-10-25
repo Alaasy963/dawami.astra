@@ -930,3 +930,22 @@ form > .two-col {
   box-shadow: none !important;
   backdrop-filter: none !important;
 }
+
+.company-logo {
+  width: 40px;
+  height: 40px;
+  object-fit: contain;
+  border-radius: 8px;
+}
+[data-lite] .auth-story,
+[data-lite] .help {
+  background-image: none;
+}
+@media (max-width: 600px) {
+  .header-actions {
+    flex-wrap: wrap;
+  }
+  .lite-toggle {
+    font-size: 12px;
+  }
+}

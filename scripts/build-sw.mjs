@@ -5,6 +5,7 @@ const result = await generateSW({
     "index.html",
     "assets/*.{js,css,woff2}",
     "icon.svg",
+    "*.png",
     "manifest.webmanifest",
   ],
   globIgnores: ["assets/Map-*", "assets/browser-*"],

@@ -1,0 +1,6 @@
+CREATE TRIGGER review_no_update BEFORE UPDATE ON attendance_reviews BEGIN SELECT RAISE(ABORT,'review_append_only'); END;
+CREATE TRIGGER review_no_delete BEFORE DELETE ON attendance_reviews BEGIN SELECT RAISE(ABORT,'review_append_only'); END;
+CREATE TRIGGER review_tenant BEFORE INSERT ON attendance_reviews WHEN NOT EXISTS(SELECT 1 FROM sync_operations WHERE id=NEW.operation_id AND company_id=NEW.company_id AND status='review') BEGIN SELECT RAISE(ABORT,'review_conflict'); END;
+CREATE TRIGGER attendance_no_overlap_insert BEFORE INSERT ON attendance_logs WHEN EXISTS(SELECT 1 FROM attendance_logs a WHERE a.company_id=NEW.company_id AND a.membership_id=NEW.membership_id AND a.in_at<COALESCE(NEW.out_at,9223372036854775807) AND COALESCE(a.out_at,9223372036854775807)>NEW.in_at) BEGIN SELECT RAISE(ABORT,'attendance_overlap'); END;
+CREATE TRIGGER attendance_no_overlap_update BEFORE UPDATE ON attendance_logs WHEN EXISTS(SELECT 1 FROM attendance_logs a WHERE a.id<>NEW.id AND a.company_id=NEW.company_id AND a.membership_id=NEW.membership_id AND a.in_at<COALESCE(NEW.out_at,9223372036854775807) AND COALESCE(a.out_at,9223372036854775807)>NEW.in_at) BEGIN SELECT RAISE(ABORT,'attendance_overlap'); END;
+CREATE TRIGGER attendance_close_once BEFORE UPDATE OF out_at ON attendance_logs WHEN OLD.out_at IS NOT NULL BEGIN SELECT RAISE(ABORT,'attendance_already_closed'); END;

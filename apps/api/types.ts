@@ -43,6 +43,7 @@ export type Company = {
   ends_at: number;
   session_days: number;
   gps_accuracy: number;
+  logo_key: string | null;
 };
 export type Bindings = {
   Bindings: Env;

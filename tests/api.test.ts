@@ -2,6 +2,8 @@ import { test, vi, expect } from "vitest";
 import { DatabaseSync } from "node:sqlite";
 import { readFileSync, readdirSync } from "node:fs";
 import { app } from "../apps/api/index";
+import webpush from "web-push";
+import { deliver } from "../apps/api/push";
 import { hashPin } from "../packages/domain/security";
 
 test("real API workflow across isolated tenants and scoped recovery", async () => {
@@ -47,7 +49,14 @@ test("real API workflow across isolated tenants and scoped recovery", async () =
     }
   }
   const kv = new Map<string, string>();
+  const objects = new Map<string, any>();
   const env: any = {
+    STORAGE: {
+      put: async (key: string, body: any, options: any) =>
+        objects.set(key, { body, httpMetadata: options.httpMetadata }),
+      get: async (key: string) => objects.get(key) || null,
+      delete: async (key: string) => objects.delete(key),
+    },
     DB: {
       prepare: (sql: string) => new Statement(sql),
       batch: async (statements: Statement[]) => {
@@ -106,6 +115,44 @@ test("real API workflow across isolated tenants and scoped recovery", async () =
       body: "{}",
     });
     expect(noCsrf.status).toBe(403);
+
+    const sid = session.cookie.split("=")[1],
+      sessionRecord = JSON.parse(kv.get(sid)!);
+    sessionRecord.expires = Date.now() + 300000;
+    kv.set(sid, JSON.stringify(sessionRecord));
+    const renewed = await (
+      await fetch(origin + "/api/auth/me", { headers })
+    ).json();
+    expect(renewed.expires).toBeGreaterThan(Date.now() + 6 * 86400000);
+    const unchanged = await (
+      await fetch(origin + "/api/auth/me", { headers })
+    ).json();
+    expect(unchanged.expires).toBe(renewed.expires);
+    const invalidLogo = await fetch(origin + "/api/company/logo", {
+      method: "PUT",
+      headers,
+      body: "<svg>not allowed</svg>",
+    });
+    expect(invalidLogo.status).toBe(400);
+    const png = new Uint8Array(24);
+    png.set([137, 80, 78, 71, 13, 10, 26, 10]);
+    const logo = await fetch(origin + "/api/company/logo", {
+      method: "PUT",
+      headers,
+      body: png,
+    });
+    expect(logo.status).toBe(200);
+    const ownLogo = await fetch(origin + "/api/company/logo", { headers });
+    expect(ownLogo.status).toBe(200);
+    expect(ownLogo.headers.get("Content-Type")).toBe("image/png");
+    const unauthorizedLogo = await fetch(origin + "/api/company/logo");
+    expect(unauthorizedLogo.status).toBe(401);
+    const oversize = await fetch(origin + "/api/company/logo", {
+      method: "PUT",
+      headers,
+      body: new Uint8Array(256 * 1024 + 1),
+    });
+    expect(oversize.status).toBe(400);
     sqlite
       .prepare("UPDATE companies SET status='suspended' WHERE id=?")
       .run(session.company);
@@ -188,7 +235,111 @@ test("real API workflow across isolated tenants and scoped recovery", async () =
     expect(audit).toHaveLength(1);
     expect(audit[0].role).toBe("owner");
     expect(JSON.stringify(audit)).not.toContain("temporary-manager-pin");
+
+    const r1 = crypto.randomUUID(),
+      r2 = crypto.randomUUID();
+    for (const rid of [r1, r2])
+      sqlite
+        .prepare(
+          "INSERT INTO device_rebind_requests(id,company_id,membership_id,device_hash,reason,created_at) VALUES(?,?,?,?,?,?)",
+        )
+        .run(
+          rid,
+          session.company,
+          session.member,
+          rid,
+          "Test rebind race",
+          Date.now(),
+        );
+    sqlite
+      .prepare("UPDATE device_rebind_requests SET status='approved' WHERE id=?")
+      .run(r1);
+    expect(
+      sqlite
+        .prepare("SELECT status FROM device_rebind_requests WHERE id=?")
+        .get(r2)?.status,
+    ).toBe("superseded");
+    await expect(
+      env.DB.batch([
+        env.DB.prepare("UPDATE memberships SET device_hash=? WHERE id=?").bind(
+          "stale-device",
+          session.member,
+        ),
+        env.DB.prepare(
+          "UPDATE device_rebind_requests SET status='approved' WHERE id=?",
+        ).bind(r2),
+      ]),
+    ).rejects.toThrow("rebind_already_decided");
+    expect(
+      sqlite
+        .prepare("SELECT device_hash FROM memberships WHERE id=?")
+        .get(session.member)?.device_hash,
+    ).not.toBe("stale-device");
+    const other = sqlite
+      .prepare(
+        "SELECT id FROM memberships WHERE company_id=? AND id<>? LIMIT 1",
+      )
+      .get(session.company, session.member)!;
+    const deviceHash = sqlite
+      .prepare("SELECT device_hash FROM memberships WHERE id=?")
+      .get(session.member)!.device_hash;
+    expect(() =>
+      sqlite
+        .prepare("UPDATE memberships SET device_hash=? WHERE id=?")
+        .run(deviceHash, other.id),
+    ).toThrow();
+    const closed = sqlite
+      .prepare(
+        "SELECT id,out_at FROM attendance_logs WHERE out_at IS NOT NULL LIMIT 1",
+      )
+      .get()!;
+    expect(() =>
+      sqlite
+        .prepare("UPDATE attendance_logs SET out_at=? WHERE id=?")
+        .run(closed.out_at, closed.id),
+    ).toThrow("attendance_already_closed");
+    sqlite.exec("DELETE FROM notification_outbox");
+    const jobId = crypto.randomUUID();
+    sqlite
+      .prepare(
+        "INSERT INTO notification_outbox(id,company_id,recipient,payload,next_at) VALUES(?,?,?,?,?)",
+      )
+      .run(jobId, session.company, session.member, "{}", 0);
+    sqlite
+      .prepare(
+        "INSERT INTO push_subscriptions(id,company_id,membership_id,endpoint,subscription) VALUES(?,?,?,?,?)",
+      )
+      .run(
+        crypto.randomUUID(),
+        session.company,
+        session.member,
+        "https://fcm.googleapis.com/test",
+        "{}",
+      );
+    env.VAPID_PRIVATE_KEY = "test";
+    env.VAPID_PUBLIC_KEY = "test";
+    env.VAPID_SUBJECT = "mailto:test@example.com";
+    vi.spyOn(webpush, "generateRequestDetails").mockReturnValue({
+      endpoint: "https://fcm.googleapis.com/test",
+      headers: {},
+      body: Buffer.from("test"),
+    } as any);
+    const delivery = vi.fn(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return new Response(null, { status: 201 });
+    });
+    vi.stubGlobal("fetch", delivery);
+    await Promise.all([deliver(env), deliver(env)]);
+    expect(delivery).toHaveBeenCalledTimes(1);
+    expect(
+      sqlite
+        .prepare(
+          "SELECT status,lease_token FROM notification_outbox WHERE id=?",
+        )
+        .get(jobId),
+    ).toMatchObject({ status: "sent", lease_token: null });
   } finally {
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
     sqlite.close();
   }

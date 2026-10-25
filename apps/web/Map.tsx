@@ -1,3 +1,4 @@
+import { t } from "./i18n";
 import { useEffect, useRef } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
@@ -29,5 +30,7 @@ export default function MapView({
       map.remove();
     };
   }, [lat, lng, radius]);
-  return <div className="map" ref={ref} aria-label="موقع الحضور على الخريطة" />;
+  return (
+    <div className="map" ref={ref} aria-label={t("موقع الحضور على الخريطة")} />
+  );
 }

@@ -8,6 +8,34 @@
       "when": 1792891033776,
       "tag": "0000_acoustic_power_man",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1792893954180,
+      "tag": "0002_attendance_reviews",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1792894076120,
+      "tag": "0004_outbox_leases",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1792941082167,
+      "tag": "0006_company_logo",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1792943976615,
+      "tag": "0007_push_memberships",
+      "breakpoints": true
     }
   ]
 }

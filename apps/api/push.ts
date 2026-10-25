@@ -9,6 +9,14 @@ export async function deliver(env: Env) {
     .bind(Date.now())
     .all<any>();
   for (const job of jobs.results) {
+    const token = crypto.randomUUID(),
+      now = Date.now();
+    const claimed = await env.DB.prepare(
+      "UPDATE notification_outbox SET lease_token=?,lease_until=? WHERE id=? AND company_id=? AND status='pending' AND next_at<=? AND lease_until<=?",
+    )
+      .bind(token, now + 300000, job.id, job.company_id, now, now)
+      .run();
+    if (claimed.meta.changes !== 1) continue;
     const subs = await env.DB.prepare(
       "SELECT * FROM push_subscriptions WHERE company_id=? AND membership_id=? LIMIT 5",
     )
@@ -33,6 +41,7 @@ export async function deliver(env: Env) {
           method: "POST",
           headers: detail.headers,
           body: detail.body as unknown as BodyInit,
+          signal: AbortSignal.timeout(15000),
         });
         if ([404, 410].includes(response.status))
           await env.DB.prepare(
@@ -46,13 +55,14 @@ export async function deliver(env: Env) {
       }
     }
     await env.DB.prepare(
-      "UPDATE notification_outbox SET status=?,attempts=attempts+1,next_at=? WHERE id=? AND company_id=?",
+      "UPDATE notification_outbox SET status=?,attempts=attempts+1,next_at=?,lease_token=NULL,lease_until=0 WHERE id=? AND company_id=? AND lease_token=?",
     )
       .bind(
         failed ? "pending" : "sent",
         Date.now() + Math.min(3600000, 60000 * 2 ** job.attempts),
         job.id,
         job.company_id,
+        token,
       )
       .run();
   }

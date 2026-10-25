@@ -11,7 +11,7 @@ await page.route('http://dawami.test/**',async route=>{
  const types={'.html':'text/html','.js':'text/javascript','.css':'text/css','.svg':'image/svg+xml','.woff2':'font/woff2','.woff':'font/woff'};
  try{await route.fulfill({body:await readFile(path.join('dist',relative)),contentType:types[path.extname(relative)]||'application/octet-stream'});}catch{await route.fulfill({status:404,body:''});}
 });
-await page.goto('http://dawami.test/');await page.getByRole('button',{name:'دخول',exact:true}).waitFor();
+await page.goto('http://dawami.test/');await page.getByRole('button',{name:'تسجيل الدخول',exact:true}).waitFor();
 await page.screenshot({path:'../dawami-login-desktop.png',fullPage:true});
 await page.setViewportSize({width:360,height:800});await page.screenshot({path:'../dawami-login-mobile.png',fullPage:true});
 const overflow=await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth);
