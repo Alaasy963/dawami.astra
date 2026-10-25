@@ -1371,8 +1371,13 @@ async function punch(c: any, b: z.infer<typeof punchInput>) {
   const meters = distance(b.lat, b.lng, branch.lat, branch.lng);
   if (meters > branch.radius)
     fail(400, `أنت برّا نطاق الفرع (${Math.round(meters)} م)`);
-  if (b.deviceTime > now + 60000) review = "وقت الجهاز بالمستقبل";
-  if (b.offline || queued) review = review || "حضور أوفلاين يحتاج مراجعة الوقت";
+  const delayed = b.offline || queued;
+  const exempt = m.role === "gm" && activeCompany(co);
+  if (exempt && delayed && b.deviceTime > now)
+    fail(400, "وقت الجهاز بالمستقبل");
+  if (b.deviceTime > now + 60000) review = review || "وقت الجهاز بالمستقبل";
+  if (delayed && !exempt) review = review || "حضور أوفلاين يحتاج مراجعة الوقت";
+  const eventAt = exempt && delayed ? b.deviceTime : now;
   const result = { status: review ? "review" : "accepted", reason: review },
     ops: D1PreparedStatement[] = [
       stmt(
@@ -1393,19 +1398,21 @@ async function punch(c: any, b: z.infer<typeof punchInput>) {
   if (!review) {
     const open = await stmt(
       env,
-      "SELECT id FROM attendance_logs WHERE company_id=? AND membership_id=? AND out_at IS NULL",
+      "SELECT id,in_at FROM attendance_logs WHERE company_id=? AND membership_id=? AND out_at IS NULL",
       m.company_id,
       m.id,
     ).first<any>();
     if (b.action === "in" && open) fail(409, "أنت مسجل دخول بالفعل");
     if (b.action === "out" && !open) fail(409, "ما عندك جلسة مفتوحة");
+    if (b.action === "out" && open && eventAt < open.in_at)
+      fail(409, "ما في دخول سابق مناسب. راجع الأحداث بالترتيب");
     if (b.action === "in") {
       const date = new Intl.DateTimeFormat("en-CA", {
         timeZone: co.timezone,
         year: "numeric",
         month: "2-digit",
         day: "2-digit",
-      }).format(now);
+      }).format(eventAt);
       ops.push(
         stmt(
           env,
@@ -1414,7 +1421,7 @@ async function punch(c: any, b: z.infer<typeof punchInput>) {
           m.company_id,
           m.id,
           branch.id,
-          now,
+          eventAt,
           b.lat,
           b.lng,
           s.device,
@@ -1426,7 +1433,7 @@ async function punch(c: any, b: z.infer<typeof punchInput>) {
         stmt(
           env,
           "UPDATE attendance_logs SET out_at=?,out_lat=?,out_lng=? WHERE id=? AND company_id=?",
-          now,
+          eventAt,
           b.lat,
           b.lng,
           open.id,

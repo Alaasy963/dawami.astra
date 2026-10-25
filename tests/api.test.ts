@@ -153,6 +153,72 @@ test("real API workflow across isolated tenants and scoped recovery", async () =
       body: new Uint8Array(256 * 1024 + 1),
     });
     expect(oversize.status).toBe(400);
+
+    const gmIn = {
+      id: crypto.randomUUID(),
+      action: "in",
+      deviceTime: Date.now() - 3600000,
+      lat: 33.5138,
+      lng: 36.2765,
+      accuracy: 8,
+      offline: true,
+    };
+    const gmSend = async (event: any) =>
+      await fetch(origin + "/api/attendance/sync", {
+        method: "POST",
+        headers,
+        body: JSON.stringify(event),
+      });
+    let gmResponse = await gmSend({
+      ...gmIn,
+      id: crypto.randomUUID(),
+      lat: 34,
+    });
+    expect(gmResponse.status).toBe(400);
+    gmResponse = await gmSend({
+      ...gmIn,
+      id: crypto.randomUUID(),
+      deviceTime: Date.now() + 600000,
+    });
+    expect(gmResponse.status).toBe(400);
+    gmResponse = await gmSend(gmIn);
+    expect(gmResponse.status).toBe(200);
+    expect((await gmResponse.json()).status).toBe("accepted");
+    expect(
+      sqlite
+        .prepare("SELECT in_at FROM attendance_logs WHERE id=?")
+        .get(gmIn.id)?.in_at,
+    ).toBe(gmIn.deviceTime);
+    gmResponse = await gmSend(gmIn);
+    expect(gmResponse.status).toBe(200);
+    gmResponse = await gmSend({
+      ...gmIn,
+      id: crypto.randomUUID(),
+      action: "out",
+      deviceTime: gmIn.deviceTime - 1000,
+    });
+    expect(gmResponse.status).toBe(409);
+    const gmOut = {
+      ...gmIn,
+      id: crypto.randomUUID(),
+      action: "out",
+      deviceTime: gmIn.deviceTime + 600000,
+    };
+    gmResponse = await gmSend(gmOut);
+    expect(gmResponse.status).toBe(200);
+    expect((await gmResponse.json()).status).toBe("accepted");
+    expect(
+      sqlite
+        .prepare("SELECT out_at FROM attendance_logs WHERE id=?")
+        .get(gmIn.id)?.out_at,
+    ).toBe(gmOut.deviceTime);
+    expect(
+      sqlite
+        .prepare(
+          "SELECT count(*) AS n FROM attendance_reviews WHERE operation_id IN (?,?)",
+        )
+        .get(gmIn.id, gmOut.id)?.n,
+    ).toBe(0);
     sqlite
       .prepare("UPDATE companies SET status='suspended' WHERE id=?")
       .run(session.company);
@@ -178,7 +244,7 @@ test("real API workflow across isolated tenants and scoped recovery", async () =
           "SELECT count(*) AS n FROM attendance_logs WHERE membership_id=?",
         )
         .get(session.member)?.n,
-    ).toBe(0);
+    ).toBe(1);
     const blocked = await fetch(origin + "/api/attendance/punch", {
       method: "POST",
       headers,

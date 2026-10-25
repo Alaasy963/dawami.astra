@@ -351,6 +351,32 @@ r = await manager.request("/members/" + member + "/reset", {
   reason: "Authorized scoped recovery",
 });
 check(r.status === 200, "manager can reset own worker");
+await manager.request("/device/bind", {});
+const managerEvent = {
+  id: randomUUID(),
+  action: "in",
+  deviceTime: Date.now() - 60000,
+  lat: 33.5138,
+  lng: 36.2765,
+  accuracy: 8,
+  offline: true,
+};
+r = await manager.request("/attendance/sync", managerEvent);
+check(
+  r.status === 200 && r.data.status === "review",
+  "branch manager still requires offline review",
+);
+r = await manager.request("/attendance/reviews/" + managerEvent.id, {
+  decision: "approve",
+  reason: "Attempt self approval",
+});
+check(r.status === 403, "branch manager cannot self-approve");
+r = await a.request("/attendance/reviews/" + managerEvent.id, {
+  decision: "approve",
+  reason: "General manager verified attendance",
+});
+check(r.status === 200, "GM reviews branch manager offline attendance");
+
 r = await a.request("/members/" + member + "/reset", {
   pin: secret + "local",
   reason: "Manual manager recovery",
