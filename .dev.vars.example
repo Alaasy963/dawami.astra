@@ -1,0 +1,6 @@
+OWNER_PHONE=+963900000000
+# Generate with npm run owner:hash; store the hash, never a plaintext PIN.
+OWNER_HASH=
+VAPID_PUBLIC_KEY=
+VAPID_PRIVATE_KEY=
+VAPID_SUBJECT=mailto:owner@example.com
