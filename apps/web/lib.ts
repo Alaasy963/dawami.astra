@@ -1,4 +1,5 @@
 import { t, language, locale } from "./i18n";
+import { clearOfflineProfile } from "./offline-profile";
 import Dexie, { type Table } from "dexie";
 export type Operation = {
   id: string;
@@ -161,6 +162,8 @@ export async function uploadLogo(file: File) {
   }
 }
 
-export function signOut() {
-  return api("/auth/logout", undefined, "POST");
+export async function signOut() {
+  const result = await api("/auth/logout", undefined, "POST");
+  clearOfflineProfile();
+  return result;
 }

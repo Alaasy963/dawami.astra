@@ -46,6 +46,11 @@ import {
   type Operation,
 } from "./lib";
 import "./style.css";
+import {
+  saveOfflineProfile,
+  readOfflineProfile,
+  clearOfflineProfile,
+} from "./offline-profile";
 import { getCurrentLocation } from "./geolocation";
 import LocationPicker, { type Point } from "./LocationPicker";
 
@@ -377,36 +382,36 @@ function App() {
       const x = await api("/auth/me");
       setCsrf(x.csrf);
       setMe(x);
-      if (!x.owner && x.member && !x.mustChange) {
-        const { csrf, memberships, ...snapshot } = x;
-        sessionStorage.setItem(
-          "dawami-offline-profile",
-          JSON.stringify({
-            ...snapshot,
-            memberships: [],
-          }),
-        );
-      } else sessionStorage.removeItem("dawami-offline-profile");
+      setOnline(true);
+      try {
+        saveOfflineProfile(x, deviceId());
+      } catch {
+        /* Storage can be unavailable in private browsing. */
+      }
     } catch (e) {
-      if (e instanceof ApiError && e.status === 401) {
-        setMe(null);
-        sessionStorage.removeItem("dawami-offline-profile");
-      } else if (!navigator.onLine) {
-        try {
-          const snapshot = JSON.parse(
-            sessionStorage.getItem("dawami-offline-profile") || "null",
-          );
-          if (snapshot?.expires > Date.now() && snapshot.deviceBound) {
-            setMe(snapshot);
-            setView("attendance");
-            setMessage(
-              t("أنت أوفلاين. الحضور محفوظ محلياً وبانتظار تحقق الخادم."),
-            );
-          } else setMessage(t("اتصل بالإنترنت لتجديد جلسة الدخول."));
-        } catch {
-          sessionStorage.removeItem("dawami-offline-profile");
+      if (e instanceof ApiError) {
+        if ([401, 403].includes(e.status)) {
+          setMe(null);
+          clearOfflineProfile();
         }
-      } else setMessage((e as Error).message);
+        setMessage((e as Error).message);
+      } else {
+        setOnline(false);
+        const snapshot = readOfflineProfile(deviceId());
+        if (snapshot) {
+          setCsrf("");
+          setMe(snapshot);
+          setView("attendance");
+          setMessage(
+            t(
+              "أنت بدون اتصال بالخادم. يمكنك تسجيل الحضور الآن، وستُرسل العمليات عند عودة الإنترنت.",
+            ),
+          );
+        } else {
+          setMe(null);
+          setMessage(t("اتصل بالإنترنت لتجديد جلسة الدخول."));
+        }
+      }
     } finally {
       setReady(true);
     }
@@ -441,7 +446,7 @@ function App() {
       await fn();
       setMessage(success);
       setRevision((x) => x + 1);
-      await refresh();
+      if (online) await refresh();
     } catch (e) {
       setMessage((e as Error).message);
     } finally {
@@ -449,7 +454,17 @@ function App() {
     }
   };
   if (!ready) return <div className="loading">{t("عم نجهّز يومك…")}</div>;
-  if (!me) return <Auth onSuccess={refresh} />;
+  if (!me)
+    return (
+      <>
+        <Auth onSuccess={refresh} />
+        {message && (
+          <p role="status" className="notice">
+            {message}
+          </p>
+        )}
+      </>
+    );
   if (me.mustChange)
     return (
       <div className="auth simple">
@@ -760,7 +775,13 @@ function App() {
               <Dashboard me={me} revision={revision} setView={setView} />
             )}
             {actualView === "attendance" && (
-              <Attendance me={me} revision={revision} act={act} busy={busy} />
+              <Attendance
+                me={me}
+                revision={revision}
+                act={act}
+                busy={busy}
+                online={online}
+              />
             )}
             {actualView === "members" && (
               <Members me={me} revision={revision} act={act} busy={busy} />
@@ -958,11 +979,13 @@ function Attendance({
   revision,
   act,
   busy,
+  online,
 }: {
   me: any;
   revision: number;
   act: Action;
   busy: boolean;
+  online: boolean;
 }) {
   const { data, error } = useData("/attendance/mine", revision),
     [ops, setOps] = useState<Operation[]>([]),
@@ -982,6 +1005,8 @@ function Attendance({
   const perform = (action: "in" | "out") =>
     act(
       async () => {
+        if (me.expires <= Date.now())
+          throw new Error(t("اتصل بالإنترنت لتجديد جلسة الدخول."));
         const gps = await getCurrentLocation();
         const payload = {
           id: crypto.randomUUID(),
@@ -990,7 +1015,7 @@ function Attendance({
           lat: gps.coords.latitude,
           lng: gps.coords.longitude,
           accuracy: gps.coords.accuracy,
-          offline: !navigator.onLine,
+          offline: !online,
         };
         await localDB.operations.add({
           ...payload,
@@ -998,7 +1023,7 @@ function Attendance({
           membershipId: me.member.id,
           state: "pending",
         });
-        if (navigator.onLine) {
+        if (online) {
           try {
             const r = await api("/attendance/punch", payload);
             await localDB.operations.update(payload.id, {
@@ -1024,7 +1049,7 @@ function Attendance({
         }
         navigator.vibrate?.(80);
       },
-      navigator.onLine
+      online
         ? t("تم إرسال عملية الحضور")
         : t("انحفظت العملية بانتظار المزامنة"),
     );
@@ -1075,13 +1100,13 @@ function Attendance({
           ) : (
             <div className="punch-buttons">
               <button
-                disabled={busy || (navigator.onLine && !!open)}
+                disabled={busy || (online && !!open)}
                 onClick={() => void perform("in")}
               >
                 {t("تسجيل دخول")}
               </button>
               <button
-                disabled={busy || (navigator.onLine && !open)}
+                disabled={busy || (online && !open)}
                 className="secondary"
                 onClick={() => void perform("out")}
               >

@@ -381,5 +381,6 @@
   "إذن الموقع محظور. فعّل خدمات الموقع واسمح لهذا الموقع من إعدادات المتصفح، ثم أعد المحاولة.": "Location permission is blocked. Enable Location Services and allow this website in browser settings, then retry.",
   "إشارة الموقع غير متاحة حالياً. انتقل لمكان بإشارة أفضل وتأكد من تشغيل خدمات الموقع، ثم أعد المحاولة.": "Location is currently unavailable. Move somewhere with a better signal, check Location Services, then retry.",
   "انتهت مهلة تحديد الموقع. جرّب قرب نافذة أو بمكان مفتوح، ثم أعد المحاولة.": "Location request timed out. Try near a window or outdoors, then retry.",
-  "تعذّر تحديد الموقع. أعد المحاولة من متصفح يدعم خدمات الموقع.": "Unable to determine location. Retry using a browser that supports Location Services."
+  "تعذّر تحديد الموقع. أعد المحاولة من متصفح يدعم خدمات الموقع.": "Unable to determine location. Retry using a browser that supports Location Services.",
+  "أنت بدون اتصال بالخادم. يمكنك تسجيل الحضور الآن، وستُرسل العمليات عند عودة الإنترنت.": "You are disconnected from the server. You can record attendance now; operations will be sent when internet returns."
 }
