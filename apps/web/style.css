@@ -949,3 +949,17 @@ form > .two-col {
     font-size: 12px;
   }
 }
+
+.location-picker {
+  border: 1px solid var(--border, #cbd5e1);
+  border-radius: 12px;
+  padding: 16px;
+  min-width: 0;
+}
+.location-picker .actions {
+  flex-wrap: wrap;
+}
+.location-picker .choice {
+  white-space: normal;
+  text-align: start;
+}

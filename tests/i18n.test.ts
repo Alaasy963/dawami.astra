@@ -11,7 +11,11 @@ describe("interface language", () => {
     expect(translate("A user-written name", "en")).toBe("A user-written name");
   });
   it("provides English for every static translation key used by the interface", () => {
-    for (const file of ["apps/web/main.tsx", "apps/web/lib.ts"]) {
+    for (const file of [
+      "apps/web/main.tsx",
+      "apps/web/lib.ts",
+      "apps/web/LocationPicker.tsx",
+    ]) {
       const source = readFileSync(file, "utf8");
       for (const match of source.matchAll(/\bt\("((?:\\.|[^"\\])*)"/g)) {
         const key = JSON.parse('"' + match[1] + '"');

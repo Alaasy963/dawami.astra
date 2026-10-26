@@ -103,6 +103,45 @@ test("real API workflow across isolated tenants and scoped recovery", async () =
       "X-CSRF-Token": me.csrf,
       "Content-Type": "application/json",
     };
+    const originalFetch = globalThis.fetch;
+    const placesFetch = vi.fn(
+      async (_input: any, _options?: any) =>
+        new Response(
+          JSON.stringify({
+            features: [
+              {
+                geometry: { coordinates: [36.3, 33.5] },
+                properties: { name: "Test street", city: "Test city" },
+              },
+              {
+                geometry: { coordinates: [999, 999] },
+                properties: { name: "Invalid" },
+              },
+            ],
+          }),
+        ),
+    );
+    vi.stubGlobal("fetch", placesFetch);
+    const placesResponse = await app.request(
+      origin + "/api/places/search?q=Test%20city",
+      { headers },
+      env,
+    );
+    expect(placesResponse.status).toBe(200);
+    expect(await placesResponse.json()).toEqual({
+      items: [{ lat: 33.5, lng: 36.3, label: "Test street، Test city" }],
+    });
+    expect(String(placesFetch.mock.calls[0]?.[0])).toContain("q=Test+city");
+    placesFetch.mockImplementation(
+      async () => new Response(null, { status: 503 }),
+    );
+    const unavailablePlaces = await app.request(
+      origin + "/api/places/search?q=Test%20city",
+      { headers },
+      env,
+    );
+    expect(unavailablePlaces.status).toBe(503);
+    vi.stubGlobal("fetch", originalFetch);
     const badOrigin = await fetch(origin + "/api/device/bind", {
       method: "POST",
       headers: { ...headers, Origin: "https://evil.example" },

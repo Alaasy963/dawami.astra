@@ -937,6 +937,48 @@ app.put("/api/company", async (c) => {
   ]);
   return c.json({ ok: true });
 });
+app.get("/api/places/search", async (c) => {
+  roles(c, "gm", "am");
+  const query = z.string().trim().min(3).max(200).parse(c.req.query("q"));
+  if (
+    !(
+      await c.env.AUTH_LIMIT.limit({
+        key: "places:" + c.get("member").company_id,
+      })
+    ).success
+  )
+    fail(429, "محاولات كثيرة. جرّب بعد دقيقة");
+  try {
+    const url = new URL("https://photon.komoot.io/api/");
+    url.searchParams.set("q", query);
+    url.searchParams.set("limit", "5");
+    const response = await fetch(url, { signal: AbortSignal.timeout(10000) });
+    if (!response.ok) throw new Error("geocoder unavailable");
+    const data: any = await response.json();
+    const items = (data.features ?? []).flatMap((feature: any) => {
+      const [lng, lat] = feature.geometry?.coordinates ?? [];
+      if (
+        !Number.isFinite(lat) ||
+        !Number.isFinite(lng) ||
+        Math.abs(lat) > 90 ||
+        Math.abs(lng) > 180
+      )
+        return [];
+      const p = feature.properties ?? {};
+      const label = [
+        ...new Set(
+          [p.name, p.street, p.housenumber, p.city, p.state, p.country].filter(
+            (x) => typeof x === "string" && x,
+          ),
+        ),
+      ].join("، ");
+      return label ? [{ lat, lng, label }] : [];
+    });
+    return c.json({ items });
+  } catch {
+    fail(503, "تعذّر البحث عن العنوان. جرّب مجدداً أو حدد النقطة على الخريطة.");
+  }
+});
 app.get("/api/branches", async (c) =>
   c.json({
     items: (

@@ -46,6 +46,7 @@ import {
   type Operation,
 } from "./lib";
 import "./style.css";
+import LocationPicker, { type Point } from "./LocationPicker";
 
 document.documentElement.lang = language;
 document.documentElement.dir = language === "en" ? "ltr" : "rtl";
@@ -1196,7 +1197,10 @@ function Branches({
 }) {
   const { data } = useData("/branches", revision),
     departments = useData("/departments", revision),
-    [selected, setSelected] = useState<any>(null);
+    [selected, setSelected] = useState<any>(null),
+    [branchPoint, setBranchPoint] = useState<Point | null>(null),
+    [branchRadius, setBranchRadius] = useState(150),
+    [editingBranch, setEditingBranch] = useState<any>(null);
   const manage = ["gm", "am"].includes(me.member.role);
   return (
     <>
@@ -1219,6 +1223,18 @@ function Branches({
           {!data?.items.length && (
             <Empty text={t("أضف أول فرع لتسجيل الحضور")} />
           )}
+          {selected && manage && (
+            <button
+              type="button"
+              onClick={() => {
+                setEditingBranch(selected);
+                setBranchPoint({ lat: selected.lat, lng: selected.lng });
+                setBranchRadius(selected.radius);
+              }}
+            >
+              {t("تعديل هذا الفرع")}
+            </button>
+          )}
           {selected && (
             <Suspense fallback={<Empty text={t("عم نحمّل الخريطة…")} />}>
               <OptionalMap
@@ -1231,59 +1247,73 @@ function Branches({
         </section>
         {manage && (
           <section className="card padded">
-            <h2>{t("إضافة فرع")}</h2>
+            <h2>{editingBranch ? t("تعديل الفرع") : t("إضافة فرع")}</h2>
+            {editingBranch && (
+              <button
+                type="button"
+                className="ghost"
+                onClick={() => {
+                  setEditingBranch(null);
+                  setBranchPoint(null);
+                  setBranchRadius(150);
+                }}
+              >
+                {t("إلغاء التعديل وإضافة فرع جديد")}
+              </button>
+            )}
             <form
+              key={editingBranch?.id ?? "new"}
               onSubmit={(e) => {
                 e.preventDefault();
+                if (!branchPoint) return;
                 const f = new FormData(e.currentTarget);
                 void act(() =>
-                  api("/branches", {
-                    name: f.get("name"),
-                    lat: Number(f.get("lat")),
-                    lng: Number(f.get("lng")),
-                    radius: Number(f.get("radius")),
-                  }),
+                  api(
+                    editingBranch
+                      ? `/branches/${editingBranch.id}`
+                      : "/branches",
+                    {
+                      name: f.get("name"),
+                      lat: branchPoint.lat,
+                      lng: branchPoint.lng,
+                      radius: Number(f.get("radius")),
+                      ...(editingBranch ? { reason: f.get("reason") } : {}),
+                    },
+                    editingBranch ? "PUT" : "POST",
+                  ),
                 );
               }}
             >
               <Field label={t("اسم الفرع")}>
-                <input name="name" required minLength={2} />
+                <input
+                  name="name"
+                  required
+                  minLength={2}
+                  defaultValue={editingBranch?.name ?? ""}
+                />
               </Field>
-              <div className="two-col">
-                <Field label={t("خط العرض")}>
-                  <input
-                    name="lat"
-                    type="number"
-                    step="any"
-                    min={-90}
-                    max={90}
-                    required
-                    defaultValue="33.5138"
-                  />
+              {editingBranch && (
+                <Field label={t("سبب التعديل")}>
+                  <input name="reason" required minLength={3} />
                 </Field>
-                <Field label={t("خط الطول")}>
-                  <input
-                    name="lng"
-                    type="number"
-                    step="any"
-                    min={-180}
-                    max={180}
-                    required
-                    defaultValue="36.2765"
-                  />
-                </Field>
-              </div>
+              )}
+              <LocationPicker
+                value={branchPoint}
+                onChange={setBranchPoint}
+                radius={branchRadius}
+              />
               <Field label={t("نطاق الحضور بالمتر")}>
                 <input
                   name="radius"
                   type="number"
                   min={10}
                   max={10000}
-                  defaultValue={150}
+                  value={branchRadius}
+                  onChange={(e) => setBranchRadius(Number(e.target.value))}
                   required
                 />
               </Field>
-              <button disabled={busy}>{t("حفظ الفرع")}</button>
+              <button disabled={busy || !branchPoint}>{t("حفظ الفرع")}</button>
             </form>
           </section>
         )}
