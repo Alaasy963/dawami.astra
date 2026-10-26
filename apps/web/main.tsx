@@ -46,6 +46,7 @@ import {
   type Operation,
 } from "./lib";
 import "./style.css";
+import PushControls from "./PushControls";
 import { attendanceView, elapsedTime } from "./attendance-view";
 import {
   saveOfflineProfile,
@@ -363,7 +364,9 @@ function App() {
   const [me, setMe] = useState<any>(null),
     [ready, setReady] = useState(false),
     [view, setView] = useState(
-      new URLSearchParams(location.search).get("view") === "location"
+      ["location", "notifications"].includes(
+        new URLSearchParams(location.search).get("view") ?? "",
+      )
         ? "notifications"
         : new URLSearchParams(location.search).get("view") === "attendance"
           ? "attendance"
@@ -1879,34 +1882,7 @@ function Notifications({ revision, act }: { revision: number; act: Action }) {
     <section className="card padded">
       <div className="card-title">
         <h2>{t("مركز الإشعارات")}</h2>
-        <button
-          className="secondary"
-          onClick={() =>
-            void act(async () => {
-              if (!("serviceWorker" in navigator) || !("PushManager" in window))
-                throw new Error(
-                  t(
-                    "هالمتصفح لا يدعم الإشعارات. على iPhone أضف التطبيق للشاشة الرئيسية",
-                  ),
-                );
-              const config = await api("/public/config");
-              if (!config.vapidPublicKey)
-                throw new Error(t("مفاتيح push لم تُجهز على الخادم بعد"));
-              const registration = await navigator.serviceWorker.ready;
-              const raw = atob(
-                config.vapidPublicKey.replace(/-/g, "+").replace(/_/g, "/"),
-              );
-              const key = Uint8Array.from(raw, (c) => c.charCodeAt(0));
-              const subscription = await registration.pushManager.subscribe({
-                userVisibleOnly: true,
-                applicationServerKey: key,
-              });
-              await api("/push/subscribe", subscription.toJSON());
-            }, t("تم تفعيل الإشعارات"))
-          }
-        >
-          {t("تفعيل إشعارات الجهاز")}
-        </button>
+        <PushControls />
       </div>
       <p className="error">{error}</p>
       {location && (

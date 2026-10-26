@@ -17,6 +17,7 @@ describe("interface language", () => {
       "apps/web/LocationPicker.tsx",
       "apps/web/geolocation.ts",
       "apps/web/places.ts",
+      "apps/web/PushControls.tsx",
     ]) {
       const source = readFileSync(file, "utf8");
       for (const match of source.matchAll(/\bt\("((?:\\.|[^"\\])*)"/g)) {

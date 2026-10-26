@@ -103,6 +103,65 @@ test("real API workflow across isolated tenants and scoped recovery", async () =
       "X-CSRF-Token": me.csrf,
       "Content-Type": "application/json",
     };
+    const missingPush = await app.request(
+      origin + "/api/push/test",
+      { method: "POST", headers, body: "{}" },
+      env,
+    );
+    expect(missingPush.status).toBe(503);
+    env.VAPID_PRIVATE_KEY = "test-private";
+    env.VAPID_PUBLIC_KEY = "test-public";
+    env.VAPID_SUBJECT = "https://example.test";
+    const noPushSubscription = await app.request(
+      origin + "/api/push/test",
+      { method: "POST", headers, body: "{}" },
+      env,
+    );
+    expect(noPushSubscription.status).toBe(400);
+    sqlite
+      .prepare(
+        "INSERT INTO push_subscriptions(id,company_id,membership_id,endpoint,subscription) VALUES(?,?,?,?,?)",
+      )
+      .run(
+        "test-own-push",
+        me.member.company_id,
+        me.member.id,
+        "https://fcm.googleapis.com/test-own-push",
+        "{}",
+      );
+    const testPush = await app.request(
+      origin + "/api/push/test",
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          recipient: "another-member",
+          companyId: "another-company",
+        }),
+      },
+      env,
+    );
+    expect(testPush.status).toBe(200);
+    const ownJob = sqlite
+      .prepare(
+        "SELECT company_id,recipient FROM notification_outbox WHERE payload LIKE '%إشعار تجريبي%'",
+      )
+      .get();
+    expect(ownJob).toMatchObject({
+      company_id: me.member.company_id,
+      recipient: me.member.id,
+    });
+    sqlite
+      .prepare(
+        "DELETE FROM notification_outbox WHERE payload LIKE '%إشعار تجريبي%'",
+      )
+      .run();
+    sqlite
+      .prepare("DELETE FROM push_subscriptions WHERE id='test-own-push'")
+      .run();
+    delete env.VAPID_PRIVATE_KEY;
+    delete env.VAPID_PUBLIC_KEY;
+    delete env.VAPID_SUBJECT;
     const originalFetch = globalThis.fetch;
     const placesFetch = vi.fn(
       async (_input: any, _options?: any) =>

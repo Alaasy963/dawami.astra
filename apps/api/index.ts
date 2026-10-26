@@ -1771,6 +1771,38 @@ app.post("/api/notifications/:id/read", async (c) => {
   ).run();
   return c.json({ ok: true });
 });
+app.post("/api/push/test", async (c) => {
+  const m = c.get("member");
+  if (
+    !c.env.VAPID_PRIVATE_KEY ||
+    !c.env.VAPID_PUBLIC_KEY ||
+    !c.env.VAPID_SUBJECT
+  )
+    fail(503, "مفاتيح push لم تُجهز على الخادم بعد");
+  if (!(await c.env.AUTH_LIMIT.limit({ key: "push-test:" + m.id })).success)
+    fail(429, "محاولات كثيرة. جرّب بعد دقيقة");
+  const subscription = await stmt(
+    c.env,
+    "SELECT id FROM push_subscriptions WHERE company_id=? AND membership_id=? LIMIT 1",
+    m.company_id,
+    m.id,
+  ).first();
+  if (!subscription) fail(400, "فعّل إشعارات الجهاز أولاً.");
+  await stmt(
+    c.env,
+    "INSERT INTO notification_outbox(id,company_id,recipient,payload,next_at) VALUES(?,?,?,?,?)",
+    id(),
+    m.company_id,
+    m.id,
+    JSON.stringify({
+      title: "دوامي — إشعار تجريبي",
+      body: "وصل إشعار الاختبار من الخادم إلى جهازك.",
+      url: "/?view=notifications",
+    }),
+    Date.now(),
+  ).run();
+  return c.json({ queued: true });
+});
 app.post("/api/push/subscribe", async (c) => {
   const b = z
       .object({

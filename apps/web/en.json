@@ -384,5 +384,10 @@
   "تعذّر تحديد الموقع. أعد المحاولة من متصفح يدعم خدمات الموقع.": "Unable to determine location. Retry using a browser that supports Location Services.",
   "أنت بدون اتصال بالخادم. يمكنك تسجيل الحضور الآن، وستُرسل العمليات عند عودة الإنترنت.": "You are disconnected from the server. You can record attendance now; operations will be sent when internet returns.",
   "وقت محلي مؤقت — بانتظار تحقق الخادم": "Provisional local time — awaiting server verification",
-  "بدون إنترنت: العمليات والوقت الظاهر محفوظة على هذا الجهاز، وتُراجع عند المزامنة.": "Offline: operations and displayed time are stored on this device and checked during synchronization."
+  "بدون إنترنت: العمليات والوقت الظاهر محفوظة على هذا الجهاز، وتُراجع عند المزامنة.": "Offline: operations and displayed time are stored on this device and checked during synchronization.",
+  "الإشعارات محظورة. فعّلها من إعدادات الجهاز ثم أعد المحاولة.": "Notifications are blocked. Enable them in device settings and retry.",
+  "فعّل إشعارات الجهاز أولاً.": "Enable device notifications first.",
+  "تمت جدولة إشعار تجريبي لحسابك. انتظر نحو دقيقة وتحقق من مركز إشعارات الجهاز.": "A test notification is queued for your account. Wait about a minute and check your device notification centre.",
+  "على iPhone: أضف دوامي للشاشة الرئيسية وافتحه من الأيقونة، ثم فعّل الإشعارات.": "On iPhone: add Dawami to your Home Screen and open its icon, then enable notifications.",
+  "إرسال إشعار تجريبي": "Send a test notification"
 }
