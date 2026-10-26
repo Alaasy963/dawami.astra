@@ -25,9 +25,21 @@ function fail(
 ): never {
   throw new HTTPException(status, { message });
 }
-const phone = z.string().regex(/^\+[1-9]\d{7,14}$/),
-  pin = z.string().min(8).max(128),
-  name = z.string().trim().min(2).max(100),
+const phone = z
+    .string()
+    .regex(
+      /^\+[1-9]\d{7,14}$/,
+      "اكتب رقم الموبايل مع + ورمز البلد، بدون مسافات أو صفر البداية المحلي.",
+    ),
+  pin = z
+    .string()
+    .min(8, "كلمة السر لازم تكون بين 8 و128 حرف.")
+    .max(128, "كلمة السر لازم تكون بين 8 و128 حرف."),
+  name = z
+    .string()
+    .trim()
+    .min(2, "الاسم لازم يكون بين حرفين و100 حرف.")
+    .max(100, "الاسم لازم يكون بين حرفين و100 حرف."),
   uuid = z.string().uuid(),
   device = z.string().min(20).max(200);
 const stmt = (env: Env, sql: string, ...args: any[]) =>

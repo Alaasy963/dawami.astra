@@ -349,5 +349,9 @@
   "المسار غير موجود": "Route not found",
   "تحميل الخريطة عند الطلب": "Load map on demand",
   "موقع الحضور على الخريطة": "Attendance location on the map",
-  "رفع الشعار غير متاح حتى تفعيل تخزين الملفات": "Logo uploads are unavailable until file storage is enabled"
+  "رفع الشعار غير متاح حتى تفعيل تخزين الملفات": "Logo uploads are unavailable until file storage is enabled",
+  "اكتب رقم الموبايل مع + ورمز البلد، بدون مسافات أو صفر البداية المحلي.": "Enter + and your country code, without spaces or the local leading zero.",
+  "كلمة السر لازم تكون بين 8 و128 حرف.": "Your password must contain 8 to 128 characters.",
+  "الاسم لازم يكون بين حرفين و100 حرف.": "The name must contain 2 to 100 characters.",
+  "رمز الشركة غير صالح. انسخه كامل من مديرك.": "Invalid company code. Copy the full code from your manager."
 }

@@ -151,6 +151,7 @@ function CurrencySelect({ value = "SYP" }: { value?: string }) {
 function Auth({ onSuccess }: { onSuccess: () => Promise<void> }) {
   const [signup, setSignup] = useState(false),
     [error, setError] = useState(""),
+    [fieldErrors, setFieldErrors] = useState<Record<string, string>>({}),
     [busy, setBusy] = useState(false),
     [local, setLocal] = useState(false);
   return (
@@ -194,6 +195,7 @@ function Auth({ onSuccess }: { onSuccess: () => Promise<void> }) {
             e.preventDefault();
             setBusy(true);
             setError("");
+            setFieldErrors({});
             const f = new FormData(e.currentTarget);
             try {
               await api(signup ? "/auth/signup" : "/auth/login", {
@@ -215,6 +217,7 @@ function Auth({ onSuccess }: { onSuccess: () => Promise<void> }) {
               await onSuccess();
             } catch (e) {
               setError((e as Error).message);
+              if (e instanceof ApiError) setFieldErrors(e.fieldErrors);
             } finally {
               setBusy(false);
             }
@@ -223,10 +226,31 @@ function Auth({ onSuccess }: { onSuccess: () => Promise<void> }) {
           {signup && (
             <>
               <Field label={t("اسم الشركة")}>
-                <input name="company" required minLength={2} />
+                <input
+                  name="company"
+                  required
+                  minLength={2}
+                  maxLength={100}
+                  aria-invalid={!!fieldErrors.company}
+                  aria-describedby="auth-company-error"
+                />
+                <small id="auth-company-error" className="error">
+                  {fieldErrors.company}
+                </small>
               </Field>
               <Field label={t("اسمك الكامل")}>
-                <input name="name" required minLength={2} />
+                <input
+                  name="name"
+                  required
+                  minLength={2}
+                  maxLength={100}
+                  autoComplete="name"
+                  aria-invalid={!!fieldErrors.name}
+                  aria-describedby="auth-name-error"
+                />
+                <small id="auth-name-error" className="error">
+                  {fieldErrors.name}
+                </small>
               </Field>
               <Field label={t("عملة الشركة")}>
                 <CurrencySelect />
@@ -238,23 +262,52 @@ function Auth({ onSuccess }: { onSuccess: () => Promise<void> }) {
               name="phone"
               type="tel"
               dir="ltr"
-              placeholder="+963 9xx xxx xxx"
+              placeholder="+9639xxxxxxxx"
+              aria-invalid={!!fieldErrors.phone}
+              aria-describedby="auth-phone-hint auth-phone-error"
               required
               autoComplete="tel"
             />
+            <small id="auth-phone-hint">
+              {t(
+                "اكتب رقم الموبايل مع + ورمز البلد، بدون مسافات أو صفر البداية المحلي.",
+              )}
+            </small>
+            <small id="auth-phone-error" className="error">
+              {fieldErrors.phone}
+            </small>
           </Field>
           <Field label={t("كلمة السر / PIN")}>
             <input
               name="pin"
               type="password"
               minLength={signup ? 8 : 1}
+              maxLength={128}
+              aria-invalid={!!fieldErrors.pin}
+              aria-describedby="auth-pin-hint auth-pin-error"
               required
               autoComplete={signup ? "new-password" : "current-password"}
             />
+            <small id="auth-pin-hint">
+              {signup && t("كلمة السر لازم تكون بين 8 و128 حرف.")}
+            </small>
+            <small id="auth-pin-error" className="error">
+              {fieldErrors.pin}
+            </small>
           </Field>
           {local && !signup && (
             <Field label={t("رمز الشركة من المدير")}>
-              <input name="companyId" dir="ltr" required />
+              <input
+                name="companyId"
+                dir="ltr"
+                required
+                aria-invalid={!!fieldErrors.companyId}
+                aria-describedby="auth-company-id-error"
+              />
+              <small id="auth-company-id-error" className="error">
+                {fieldErrors.companyId &&
+                  t("رمز الشركة غير صالح. انسخه كامل من مديرك.")}
+              </small>
             </Field>
           )}
           <div role="alert" className="error">
@@ -280,6 +333,7 @@ function Auth({ onSuccess }: { onSuccess: () => Promise<void> }) {
             onClick={() => {
               setSignup(!signup);
               setError("");
+              setFieldErrors({});
             }}
           >
             {signup ? t("سجّل دخول") : t("أنشئ شركتك")}

@@ -39,6 +39,7 @@ export class ApiError extends Error {
   constructor(
     message: string,
     public status: number,
+    public fieldErrors: Record<string, string> = {},
   ) {
     super(message);
   }
@@ -62,8 +63,22 @@ export async function api(
     body: body ? JSON.stringify(body) : undefined,
   });
   const data: any = await response.json();
-  if (!response.ok)
-    throw new ApiError(t(data.error ?? "تعذّر الاتصال"), response.status);
+  if (!response.ok) {
+    const fieldErrors: Record<string, string> = {};
+    for (const issue of Array.isArray(data.issues) ? data.issues : []) {
+      if (
+        Array.isArray(issue.path) &&
+        typeof issue.path[0] === "string" &&
+        typeof issue.message === "string"
+      )
+        fieldErrors[issue.path[0]] ??= t(issue.message);
+    }
+    throw new ApiError(
+      t(data.error ?? "تعذّر الاتصال"),
+      response.status,
+      fieldErrors,
+    );
+  }
   return data;
 }
 export async function syncQueue(companyId: string, membershipId: string) {
