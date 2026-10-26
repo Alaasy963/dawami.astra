@@ -1,5 +1,5 @@
 import { lazy, Suspense, useRef, useState } from "react";
-import { api } from "./lib";
+import { searchPlaces } from "./places";
 import { t } from "./i18n";
 const Map = lazy(() => import("./Map"));
 export type Point = { lat: number; lng: number };
@@ -15,7 +15,9 @@ export default function LocationPicker({
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<(Point & { label: string })[]>([]);
   const [candidate, setCandidate] = useState<Point | null>(null);
-  const [center, setCenter] = useState<Point>(value ?? { lat: 33.5138, lng: 36.2765 });
+  const [center, setCenter] = useState<Point>(
+    value ?? { lat: 33.5138, lng: 36.2765 },
+  );
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const generation = useRef(0);
@@ -33,9 +35,7 @@ export default function LocationPicker({
     setMessage("");
     setResults([]);
     try {
-      const data = await api(
-        "/places/search?q=" + encodeURIComponent(query.trim()),
-      );
+      const data = await searchPlaces(query.trim());
       if (request !== generation.current) return;
       setResults(data.items);
       if (!data.items.length)

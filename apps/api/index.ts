@@ -953,7 +953,7 @@ app.get("/api/places/search", async (c) => {
     url.searchParams.set("q", query);
     url.searchParams.set("limit", "5");
     const response = await fetch(url, { signal: AbortSignal.timeout(10000) });
-    if (!response.ok) throw new Error("geocoder unavailable");
+    if (!response.ok) throw new Error("geocoder_http_" + response.status);
     const data: any = await response.json();
     const items = (data.features ?? []).flatMap((feature: any) => {
       const [lng, lat] = feature.geometry?.coordinates ?? [];
@@ -975,7 +975,11 @@ app.get("/api/places/search", async (c) => {
       return label ? [{ lat, lng, label }] : [];
     });
     return c.json({ items });
-  } catch {
+  } catch (error) {
+    console.warn(
+      "geocoder_failed",
+      error instanceof Error ? error.message : "unknown",
+    );
     fail(503, "تعذّر البحث عن العنوان. جرّب مجدداً أو حدد النقطة على الخريطة.");
   }
 });
