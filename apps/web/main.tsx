@@ -46,6 +46,7 @@ import {
   type Operation,
 } from "./lib";
 import "./style.css";
+import { getCurrentLocation } from "./geolocation";
 import LocationPicker, { type Point } from "./LocationPicker";
 
 document.documentElement.lang = language;
@@ -981,17 +982,7 @@ function Attendance({
   const perform = (action: "in" | "out") =>
     act(
       async () => {
-        const gps = await new Promise<GeolocationPosition>((resolve, reject) =>
-          navigator.geolocation.getCurrentPosition(
-            resolve,
-            () => reject(new Error(t("اسمح بالوصول للموقع وجرّب مرة تانية"))),
-            {
-              enableHighAccuracy: true,
-              timeout: 15000,
-              maximumAge: 0,
-            },
-          ),
-        );
+        const gps = await getCurrentLocation();
         const payload = {
           id: crypto.randomUUID(),
           action,

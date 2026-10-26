@@ -1,6 +1,7 @@
 import { lazy, Suspense, useRef, useState } from "react";
 import { searchPlaces } from "./places";
 import { t } from "./i18n";
+import { locationErrorMessage } from "./geolocation";
 const Map = lazy(() => import("./Map"));
 export type Point = { lat: number; lng: number };
 export default function LocationPicker({
@@ -74,15 +75,7 @@ export default function LocationPicker({
       (error) => {
         if (request !== generation.current) return;
         setBusy(false);
-        setMessage(
-          error.code === 1
-            ? t(
-                "إذن الموقع محظور. اسمح به من إعدادات المتصفح، أو استخدم البحث والخريطة.",
-              )
-            : t(
-                "تعذّر تحديد موقعك حالياً. جرّب مجدداً أو استخدم البحث والخريطة.",
-              ),
-        );
+        setMessage(locationErrorMessage(error.code));
       },
       { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 },
     );
