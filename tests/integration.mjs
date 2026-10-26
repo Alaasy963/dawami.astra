@@ -404,6 +404,14 @@ check(
   (await a.request("/audit")).data.items.some((x) => x.action === "pin.reset"),
   "reset audit recorded",
 );
+
+const revokedCookie = scoped.cookie;
+r = await scoped.request("/auth/logout", undefined, "POST");
+check(r.status === 200, "logout accepts bodyless POST");
+const revoked = await fetch(base + "/api/auth/me", {
+  headers: { Cookie: revokedCookie },
+});
+check(revoked.status === 401, "logged-out session cannot be reused");
 mkdirSync(".wrangler", { recursive: true });
 writeFileSync(
   ".wrangler/test-session.json",

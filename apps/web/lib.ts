@@ -145,3 +145,7 @@ export async function uploadLogo(file: File) {
     bitmap.close();
   }
 }
+
+export function signOut() {
+  return api("/auth/logout", undefined, "POST");
+}

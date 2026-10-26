@@ -36,6 +36,7 @@ import {
   api,
   ApiError,
   setCsrf,
+  signOut,
   deviceId,
   localDB,
   syncQueue,
@@ -466,10 +467,7 @@ function App() {
             </button>
           ))}
           <p role="status">{message}</p>
-          <button
-            className="ghost"
-            onClick={() => void act(() => api("/auth/logout"))}
-          >
+          <button className="ghost" onClick={() => void act(() => signOut())}>
             {t("تسجيل خروج")}
           </button>
         </section>
@@ -490,10 +488,7 @@ function App() {
             )}
           </p>
           <button onClick={() => void refresh()}>{t("تحقق من التفعيل")}</button>
-          <button
-            className="ghost"
-            onClick={() => void act(() => api("/auth/logout"))}
-          >
+          <button className="ghost" onClick={() => void act(() => signOut())}>
             {t("تسجيل خروج")}
           </button>
         </section>
@@ -645,7 +640,7 @@ function App() {
               <button
                 className="icon"
                 aria-label={t("تسجيل خروج")}
-                onClick={() => void act(() => api("/auth/logout"))}
+                onClick={() => void act(() => signOut())}
               >
                 <LogOut size={18} />
               </button>
