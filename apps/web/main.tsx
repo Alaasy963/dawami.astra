@@ -3,6 +3,7 @@ import {
   StrictMode,
   createContext,
   useContext,
+  useRef,
   useState,
   useEffect,
   useCallback,
@@ -45,6 +46,7 @@ import {
   type Operation,
 } from "./lib";
 import "./style.css";
+
 document.documentElement.lang = language;
 document.documentElement.dir = language === "en" ? "ltr" : "rtl";
 const MapView = lazy(() => import("./Map"));
@@ -1335,6 +1337,18 @@ function Members({
     [reset, setReset] = useState<any>(null),
     [rows, setRows] = useState<any[]>([]),
     [importError, setImportError] = useState("");
+  const editorRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (reset) {
+      editorRef.current?.focus({ preventScroll: true });
+      editorRef.current?.scrollIntoView({ block: "start" });
+    }
+  }, [reset]);
+  const canResetSelected =
+    reset &&
+    (me.member.role === "gm"
+      ? ["worker", "manager", "am"].includes(reset.role)
+      : ["am", "manager"].includes(me.member.role) && reset.role === "worker");
   const canCreate = ["gm", "manager"].includes(me.member.role);
   return (
     <>
@@ -1375,7 +1389,13 @@ function Members({
                     </span>
                   </td>
                   <td>
-                    <button className="text-button" onClick={() => setReset(m)}>
+                    <button
+                      type="button"
+                      className="text-button"
+                      aria-controls="member-editor"
+                      aria-expanded={reset?.id === m.id}
+                      onClick={() => setReset({ ...m })}
+                    >
                       {t("إدارة")}
                     </button>
                   </td>
@@ -1386,40 +1406,55 @@ function Members({
         </div>
       </section>
       {reset && (
-        <section className="card padded">
-          <h2>
-            {t("إدارة")}
-            {reset.name}
+        <section
+          id="member-editor"
+          ref={editorRef}
+          tabIndex={-1}
+          aria-labelledby="member-editor-title"
+          className="card padded"
+          key={reset.id}
+        >
+          <h2 id="member-editor-title">
+            {t("إدارة")} {reset.name}
           </h2>
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              const f = new FormData(e.currentTarget);
-              void act(
-                () =>
-                  api(`/members/${reset.id}/reset`, {
-                    pin: f.get("pin"),
-                    reason: f.get("reason"),
-                  }),
-                t("أعط العامل رمز الشركة: {0}", [me.company.id]),
-              );
-            }}
+          <button
+            type="button"
+            className="ghost"
+            onClick={() => setReset(null)}
           >
-            <Field label={t("PIN مؤقت جديد")}>
-              <input name="pin" type="password" minLength={8} required />
-            </Field>
-            <Field label={t("سبب إعادة التعيين")}>
-              <input name="reason" minLength={3} required />
-            </Field>
-            <button disabled={busy}>{t("إعادة تعيين ضمن هذه الشركة")}</button>
-            <button
-              type="button"
-              className="ghost"
-              onClick={() => setReset(null)}
+            {t("إغلاق")}
+          </button>
+          {canResetSelected && (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                const f = new FormData(e.currentTarget);
+                void act(
+                  () =>
+                    api(`/members/${reset.id}/reset`, {
+                      pin: f.get("pin"),
+                      reason: f.get("reason"),
+                    }),
+                  t("أعط العامل رمز الشركة: {0}", [me.company.id]),
+                );
+              }}
             >
-              {t("إغلاق")}
-            </button>
-          </form>
+              <Field label={t("PIN مؤقت جديد")}>
+                <input name="pin" type="password" minLength={8} required />
+              </Field>
+              <Field label={t("سبب إعادة التعيين")}>
+                <input name="reason" minLength={3} required />
+              </Field>
+              <button disabled={busy}>{t("إعادة تعيين ضمن هذه الشركة")}</button>
+              <button
+                type="button"
+                className="ghost"
+                onClick={() => setReset(null)}
+              >
+                {t("إغلاق")}
+              </button>
+            </form>
+          )}
           {me.member.role === "gm" && (
             <form
               onSubmit={(e) => {
@@ -1435,8 +1470,20 @@ function Members({
               }}
             >
               <h3>{t("تعيين الفرع والقسم")}</h3>
+              {branches.data?.items.length === 0 && (
+                <p role="status">
+                  {t("أنشئ فرعاً من صفحة الفروع أولاً، ثم ارجع لتعيينه.")}
+                </p>
+              )}
               <Field label={t("الفرع")}>
-                <select name="branchId" required>
+                <select
+                  name="branchId"
+                  required
+                  defaultValue={reset.branch_id || ""}
+                >
+                  <option value="" disabled>
+                    {t("اختر الفرع")}
+                  </option>
                   {branches.data?.items.map((b: any) => (
                     <option key={b.id} value={b.id}>
                       {b.name}
@@ -1445,7 +1492,10 @@ function Members({
                 </select>
               </Field>
               <Field label={t("القسم")}>
-                <select name="departmentId">
+                <select
+                  name="departmentId"
+                  defaultValue={reset.department_id || ""}
+                >
                   <option value="">{t("بدون قسم")}</option>
                   {departments.data?.items.map((d: any) => (
                     <option key={d.id} value={d.id}>
@@ -1457,7 +1507,9 @@ function Members({
               <Field label={t("السبب")}>
                 <input name="reason" required minLength={3} />
               </Field>
-              <button disabled={busy}>{t("حفظ التعيين")}</button>
+              <button disabled={busy || !branches.data?.items.length}>
+                {t("حفظ التعيين")}
+              </button>
             </form>
           )}
         </section>
