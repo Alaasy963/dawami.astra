@@ -348,5 +348,6 @@
   "الإشعارات مربوطة بعضوية ثانية على هالمتصفح": "Notifications belong to another membership in this browser",
   "المسار غير موجود": "Route not found",
   "تحميل الخريطة عند الطلب": "Load map on demand",
-  "موقع الحضور على الخريطة": "Attendance location on the map"
+  "موقع الحضور على الخريطة": "Attendance location on the map",
+  "رفع الشعار غير متاح حتى تفعيل تخزين الملفات": "Logo uploads are unavailable until file storage is enabled"
 }

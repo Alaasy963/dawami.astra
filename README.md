@@ -24,9 +24,11 @@ npm run test:integration
 
 The first command tests actual Hono handlers against temporary SQLite and test KV/rate bindings. The second needs a running Wrangler server (port 8787, override `TEST_URL`). It creates synthetic companies and accounts: use a disposable development database only. Neither test proves Workers CPU limits or real push delivery.
 
-## Deployment — not performed
+## Deployment
 
-Create D1, KV and R2 in the owner's account, replace placeholder IDs in `wrangler.toml`, configure secrets with `wrangler secret put`, apply remote migrations, then deploy. Do not deploy this unfinished draft for customers. Measure scrypt CPU on the actual Workers plan before release; never weaken hashing to fit Free. CI does not deploy or activate billing.
+A separate trial deployment is available at https://dawami-v2.dawami-app.workers.dev. See [v2 deployment status](docs/DEPLOYMENT-V2.md). Use `npm run deploy:v2` to update only this version.
+
+For other environments, create D1, KV and R2 in the owner's account, replace placeholder IDs in `wrangler.toml`, configure secrets with `wrangler secret put`, apply remote migrations, then deploy. Do not deploy this unfinished draft for customers. Measure scrypt CPU on the actual Workers plan before release; never weaken hashing to fit Free. CI does not deploy or activate billing.
 
 ## Stack
 

@@ -111,7 +111,7 @@ function Brand() {
         <Check strokeWidth={3} size={27} />
       </span>
       <b>{t("دوامي")}</b>
-      <small>DAWAMI</small>
+      <small>dawami.v2</small>
     </div>
   );
 }
@@ -1622,11 +1622,14 @@ function CompanySettings({
   return (
     <section className="card padded narrow">
       <h2>{t("إعدادات شركتك")}</h2>
+      {!me.logoUploads && (
+        <p>{t("رفع الشعار غير متاح حتى تفعيل تخزين الملفات")}</p>
+      )}
       <Field label={t("شعار الشركة (PNG أو JPEG)")}>
         <input
           type="file"
           accept="image/png,image/jpeg"
-          disabled={busy}
+          disabled={busy || !me.logoUploads}
           onChange={(e) => {
             const file = e.target.files?.[0];
             if (file) void act(() => uploadLogo(file), t("تم تحديث الشعار"));

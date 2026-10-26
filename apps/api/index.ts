@@ -20,7 +20,7 @@ import { deliver } from "./push";
 const app = new Hono<Bindings>();
 const id = () => crypto.randomUUID();
 function fail(
-  status: 400 | 401 | 403 | 404 | 409 | 423 | 429,
+  status: 400 | 401 | 403 | 404 | 409 | 423 | 429 | 503,
   message: string,
 ): never {
   throw new HTTPException(status, { message });
@@ -418,6 +418,7 @@ app.get("/api/auth/me", async (c) => {
       : [];
   return c.json({
     owner: false,
+    logoUploads: Boolean(c.env.STORAGE),
     expires: s.expires,
     name: user?.name,
     csrf: s.csrf,
@@ -806,6 +807,7 @@ app.use("/api/*", async (c, next) => {
 app.get("/api/company", (c) => c.json(c.get("company")));
 
 app.get("/api/company/logo", async (c) => {
+  if (!c.env.STORAGE) fail(503, "رفع الشعار غير متاح حتى تفعيل تخزين الملفات");
   const key = c.get("company").logo_key;
   if (!key) fail(404, "ما في شعار للشركة");
   const object = await c.env.STORAGE.get(key);
@@ -819,6 +821,7 @@ app.get("/api/company/logo", async (c) => {
   });
 });
 app.put("/api/company/logo", async (c) => {
+  if (!c.env.STORAGE) fail(503, "رفع الشعار غير متاح حتى تفعيل تخزين الملفات");
   roles(c, "gm", "am");
   const reader = c.req.raw.body?.getReader();
   if (!reader) fail(400, "اختر صورة للشعار");
