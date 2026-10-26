@@ -46,6 +46,7 @@ import {
   type Operation,
 } from "./lib";
 import "./style.css";
+import { attendanceView, elapsedTime } from "./attendance-view";
 import {
   saveOfflineProfile,
   readOfflineProfile,
@@ -125,19 +126,20 @@ function Brand() {
     </div>
   );
 }
-function useData(path: string, revision = 0) {
+function useData(path: string, revision = 0, enabled = true) {
   const [data, setData] = useState<any>(null),
     [error, setError] = useState("");
   useEffect(() => {
     let alive = true;
     setError("");
+    if (!enabled) return;
     api(path)
       .then((x) => alive && setData(x))
       .catch((e) => alive && setError(e.message));
     return () => {
       alive = false;
     };
-  }, [path, revision]);
+  }, [path, revision, enabled]);
   return {
     data,
     error,
@@ -987,7 +989,7 @@ function Attendance({
   busy: boolean;
   online: boolean;
 }) {
-  const { data, error } = useData("/attendance/mine", revision),
+  const { data, error } = useData("/attendance/mine", revision, online),
     [ops, setOps] = useState<Operation[]>([]),
     [now, setNow] = useState(Date.now());
   useEffect(() => {
@@ -998,10 +1000,10 @@ function Attendance({
     void localDB.operations
       .where("[companyId+membershipId]")
       .equals([me.member.company_id, me.member.id])
-      .toArray()
+      .sortBy("deviceTime")
       .then(setOps);
-  }, [revision, me.member.id]);
-  const open = data?.items.find((x: any) => !x.out_at);
+  }, [revision, me.member.id, me.member.company_id]);
+  const open = attendanceView(data?.items, ops);
   const perform = (action: "in" | "out") =>
     act(
       async () => {
@@ -1060,11 +1062,15 @@ function Attendance({
           <h2>{t("حضوري اليوم")}</h2>
           <p>{t("الموقع يُستخدم فقط وقت التسجيل.")}</p>
           <div className="timer" dir="ltr">
-            {open
-              ? new Date(now - open.in_at).toISOString().slice(11, 19)
-              : "00:00:00"}
+            {open ? elapsedTime(open.in_at, now) : "00:00:00"}
           </div>
-          <p>{open ? t("وقت الجلسة الحالية") : t("ما عندك جلسة مفتوحة")}</p>
+          <p>
+            {open
+              ? open.provisional
+                ? t("وقت محلي مؤقت — بانتظار تحقق الخادم")
+                : t("وقت الجلسة الحالية")
+              : t("ما عندك جلسة مفتوحة")}
+          </p>
           {!me.deviceBound ? (
             <>
               <p>{t("هذا الجهاز غير مربوط بعضويتك.")}</p>
@@ -1114,7 +1120,14 @@ function Attendance({
               </button>
             </div>
           )}
-          <p className="error">{error}</p>
+          {online && <p className="error">{error}</p>}
+          {!online && (
+            <p role="status">
+              {t(
+                "بدون إنترنت: العمليات والوقت الظاهر محفوظة على هذا الجهاز، وتُراجع عند المزامنة.",
+              )}
+            </p>
+          )}
         </section>
         <section className="card padded">
           <h2>{t("حالة المزامنة")}</h2>
@@ -1149,7 +1162,7 @@ function Attendance({
           )}
           <button
             className="secondary"
-            disabled={busy}
+            disabled={busy || !online}
             onClick={() =>
               void act(
                 () => syncQueue(me.member.company_id, me.member.id),

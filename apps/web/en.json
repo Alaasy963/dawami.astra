@@ -382,5 +382,7 @@
   "إشارة الموقع غير متاحة حالياً. انتقل لمكان بإشارة أفضل وتأكد من تشغيل خدمات الموقع، ثم أعد المحاولة.": "Location is currently unavailable. Move somewhere with a better signal, check Location Services, then retry.",
   "انتهت مهلة تحديد الموقع. جرّب قرب نافذة أو بمكان مفتوح، ثم أعد المحاولة.": "Location request timed out. Try near a window or outdoors, then retry.",
   "تعذّر تحديد الموقع. أعد المحاولة من متصفح يدعم خدمات الموقع.": "Unable to determine location. Retry using a browser that supports Location Services.",
-  "أنت بدون اتصال بالخادم. يمكنك تسجيل الحضور الآن، وستُرسل العمليات عند عودة الإنترنت.": "You are disconnected from the server. You can record attendance now; operations will be sent when internet returns."
+  "أنت بدون اتصال بالخادم. يمكنك تسجيل الحضور الآن، وستُرسل العمليات عند عودة الإنترنت.": "You are disconnected from the server. You can record attendance now; operations will be sent when internet returns.",
+  "وقت محلي مؤقت — بانتظار تحقق الخادم": "Provisional local time — awaiting server verification",
+  "بدون إنترنت: العمليات والوقت الظاهر محفوظة على هذا الجهاز، وتُراجع عند المزامنة.": "Offline: operations and displayed time are stored on this device and checked during synchronization."
 }
