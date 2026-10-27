@@ -362,6 +362,7 @@ function Auth({ onSuccess }: { onSuccess: () => Promise<void> }) {
   );
 }
 function App() {
+  const hadSession = useRef(false);
   const [me, setMe] = useState<any>(null),
     [ready, setReady] = useState(false),
     [view, setView] = useState(
@@ -388,6 +389,7 @@ function App() {
       const x = await api("/auth/me");
       setCsrf(x.csrf);
       setMe(x);
+      hadSession.current = true;
       setOnline(true);
       try {
         saveOfflineProfile(x, deviceId());
@@ -400,7 +402,13 @@ function App() {
           setMe(null);
           clearOfflineProfile();
         }
-        setMessage((e as Error).message);
+        setMessage(
+          e.status === 401
+            ? hadSession.current
+              ? t("انتهت جلسة الدخول. سجّل دخولك من جديد.")
+              : ""
+            : e.message,
+        );
       } else {
         setOnline(false);
         const snapshot = readOfflineProfile(deviceId());

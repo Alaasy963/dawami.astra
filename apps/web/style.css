@@ -981,3 +981,8 @@ form > .two-col {
 .app-update p {
   margin: 4px 0 0;
 }
+
+.auth-card .error:empty,
+.auth-card .field small:empty {
+  display: none;
+}

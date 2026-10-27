@@ -393,5 +393,6 @@
   "تحديث جديد جاهز": "An update is ready",
   "احفظ أي نموذج مفتوح قبل التحديث. عمليات الحضور المحفوظة على الجهاز تبقى موجودة.": "Save any open form before updating. Attendance operations saved on this device are retained.",
   "جارٍ التحديث…": "Updating…",
-  "تحديث التطبيق الآن": "Update app now"
+  "تحديث التطبيق الآن": "Update app now",
+  "انتهت جلسة الدخول. سجّل دخولك من جديد.": "Your session has expired. Please sign in again."
 }
