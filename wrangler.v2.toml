@@ -20,10 +20,9 @@ migrations_dir = "packages/db/migrations"
 binding = "SESSIONS"
 id = "c146a83c5b7f42ae8c51bdfbbbef62fc"
 
-# Add the STORAGE binding after the account owner enables R2.
-# [[r2_buckets]]
-# binding = "STORAGE"
-# bucket_name = "dawami-v2-storage"
+[[r2_buckets]]
+binding = "STORAGE"
+bucket_name = "dawami-v2-storage"
 
 [[ratelimits]]
 name = "AUTH_LIMIT"
