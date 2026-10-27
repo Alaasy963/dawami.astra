@@ -46,6 +46,7 @@ import {
   type Operation,
 } from "./lib";
 import "./style.css";
+import AppUpdate from "./AppUpdate";
 import PushControls from "./PushControls";
 import { attendanceView, elapsedTime } from "./attendance-view";
 import {
@@ -2374,10 +2375,10 @@ function OwnerRecovery({
     </>
   );
 }
-if ("serviceWorker" in navigator)
-  navigator.serviceWorker.register("/sw.js").catch(() => {});
+
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
+    <AppUpdate />
     <App />
   </StrictMode>,
 );

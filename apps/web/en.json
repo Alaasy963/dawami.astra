@@ -389,5 +389,9 @@
   "فعّل إشعارات الجهاز أولاً.": "Enable device notifications first.",
   "تمت جدولة إشعار تجريبي لحسابك. انتظر نحو دقيقة وتحقق من مركز إشعارات الجهاز.": "A test notification is queued for your account. Wait about a minute and check your device notification centre.",
   "على iPhone: أضف دوامي للشاشة الرئيسية وافتحه من الأيقونة، ثم فعّل الإشعارات.": "On iPhone: add Dawami to your Home Screen and open its icon, then enable notifications.",
-  "إرسال إشعار تجريبي": "Send a test notification"
+  "إرسال إشعار تجريبي": "Send a test notification",
+  "تحديث جديد جاهز": "An update is ready",
+  "احفظ أي نموذج مفتوح قبل التحديث. عمليات الحضور المحفوظة على الجهاز تبقى موجودة.": "Save any open form before updating. Attendance operations saved on this device are retained.",
+  "جارٍ التحديث…": "Updating…",
+  "تحديث التطبيق الآن": "Update app now"
 }

@@ -963,3 +963,21 @@ form > .two-col {
   white-space: normal;
   text-align: start;
 }
+
+.app-update {
+  position: sticky;
+  top: 0;
+  z-index: 1100;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 20px;
+  background: var(--surface);
+  color: var(--fg);
+  border-bottom: 2px solid var(--primary);
+}
+.app-update p {
+  margin: 4px 0 0;
+}
