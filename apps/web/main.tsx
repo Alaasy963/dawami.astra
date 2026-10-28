@@ -47,6 +47,7 @@ import {
 } from "./lib";
 import "./style.css";
 import AppUpdate from "./AppUpdate";
+import { viewContext } from "./view-context";
 import PushControls from "./PushControls";
 import { attendanceView, elapsedTime } from "./attendance-view";
 import {
@@ -612,7 +613,12 @@ function App() {
             ? [["audit", t("سجل الرقابة"), ShieldCheck]]
             : []),
         ],
-    actualView = me.owner && view === "dashboard" ? "owner" : view;
+    pageContext = viewContext(
+      view,
+      nav.map(([id]) => id),
+      me,
+    ),
+    actualView = pageContext.view;
   return (
     <LiteContext.Provider value={lite}>
       <div className="app">
@@ -739,7 +745,7 @@ function App() {
               <span className="avatar">{me.name[0]}</span>
             </div>
           </header>
-          <main id="main">
+          <main id="main" key={pageContext.scope}>
             <div className="page-heading">
               <div>
                 <div className="eyebrow">
