@@ -467,6 +467,11 @@ function App() {
       setBusy(false);
     }
   };
+  const logout = async () => {
+    await signOut();
+    hadSession.current = false;
+    setMe(null);
+  };
   if (!ready) return <div className="loading">{t("عم نجهّز يومك…")}</div>;
   if (!me)
     return (
@@ -554,7 +559,7 @@ function App() {
             </button>
           ))}
           <p role="status">{message}</p>
-          <button className="ghost" onClick={() => void act(() => signOut())}>
+          <button className="ghost" onClick={() => void act(logout, "")}>
             {t("تسجيل خروج")}
           </button>
         </section>
@@ -575,7 +580,7 @@ function App() {
             )}
           </p>
           <button onClick={() => void refresh()}>{t("تحقق من التفعيل")}</button>
-          <button className="ghost" onClick={() => void act(() => signOut())}>
+          <button className="ghost" onClick={() => void act(logout, "")}>
             {t("تسجيل خروج")}
           </button>
         </section>
@@ -727,7 +732,7 @@ function App() {
               <button
                 className="icon"
                 aria-label={t("تسجيل خروج")}
-                onClick={() => void act(() => signOut())}
+                onClick={() => void act(logout, "")}
               >
                 <LogOut size={18} />
               </button>
@@ -980,8 +985,10 @@ function Stat({
       <div>
         <span>{label}</span>
         <h2>
-          {value}
-          <small>{suffix}</small>
+          <bdi dir="ltr">
+            {value}
+            <small>{suffix}</small>
+          </bdi>
         </h2>
       </div>
       <span className={"stat-icon " + color}>{icon}</span>
@@ -1435,17 +1442,28 @@ function Members({
           <table>
             <thead>
               <tr>
+                <th>{t("إدارة")}</th>
                 <th>{t("الاسم")}</th>
                 <th>{t("الهاتف")}</th>
                 <th>{t("الدور")}</th>
                 <th>{t("الفرع")}</th>
                 <th>{t("الحالة")}</th>
-                <th>{t("إدارة")}</th>
               </tr>
             </thead>
             <tbody>
               {members.data?.items.map((m: any) => (
                 <tr key={m.id}>
+                  <td>
+                    <button
+                      type="button"
+                      className="text-button"
+                      aria-controls="member-editor"
+                      aria-expanded={reset?.id === m.id}
+                      onClick={() => setReset({ ...m })}
+                    >
+                      {t("إدارة")}
+                    </button>
+                  </td>
                   <td>{m.name}</td>
                   <td dir="ltr">{m.phone}</td>
                   <td>{roles[m.role]}</td>
@@ -1458,17 +1476,6 @@ function Members({
                           ? t("جهاز مربوط")
                           : t("بانتظار الربط")}
                     </span>
-                  </td>
-                  <td>
-                    <button
-                      type="button"
-                      className="text-button"
-                      aria-controls="member-editor"
-                      aria-expanded={reset?.id === m.id}
-                      onClick={() => setReset({ ...m })}
-                    >
-                      {t("إدارة")}
-                    </button>
                   </td>
                 </tr>
               ))}

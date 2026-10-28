@@ -886,7 +886,7 @@ form > .two-col {
     height: 30px;
   }
   .stat > div > span {
-    font-size: 10px;
+    font-size: 12px;
   }
   .side-cards {
     grid-template-columns: 1fr;
