@@ -2105,6 +2105,19 @@ function Audit({ revision }: { revision: number }) {
 }
 function Owner({ revision, act }: { revision: number; act: Action }) {
   const { data, error } = useData("/owner/companies", revision);
+  if (!data)
+    return (
+      <section className="card padded" aria-busy={!error}>
+        <h2>{t("دليل الشركات")}</h2>
+        {error ? (
+          <p className="error" role="alert">
+            {error}
+          </p>
+        ) : (
+          <p role="status">{t("عم نحمّل بيانات الشركات…")}</p>
+        )}
+      </section>
+    );
   return (
     <>
       <div className="stats">
@@ -2209,10 +2222,16 @@ function OwnerSettings({
   act: Action;
   busy: boolean;
 }) {
-  const { data } = useData("/owner/companies", revision);
+  const { data, error } = useData("/owner/companies", revision);
   return (
     <section className="card padded narrow">
       <h2>{t("التجربة والأسعار")}</h2>
+      {error && (
+        <p className="error" role="alert">
+          {error}
+        </p>
+      )}
+      {!data && !error && <p role="status">{t("عم نحمّل إعدادات المنصة…")}</p>}
       {data && (
         <form
           key={revision}
@@ -2308,6 +2327,14 @@ function OwnerRecovery({
       <div className="two-col">
         <section className="card padded">
           <h2>{t("استعادة دخول مدير عام ضمن شركته")}</h2>
+          {companies.error && (
+            <p className="error" role="alert">
+              {companies.error}
+            </p>
+          )}
+          {!companies.data && !companies.error && (
+            <p role="status">{t("عم نحمّل بيانات الشركات…")}</p>
+          )}
           <form
             onSubmit={(e) => {
               e.preventDefault();
@@ -2418,6 +2445,14 @@ function OwnerRecovery({
       </div>
       <section className="card padded">
         <h2>{t("إعادة ربط أجهزة المدراء العامين")}</h2>
+        {rebinds.error && (
+          <p className="error" role="alert">
+            {rebinds.error}
+          </p>
+        )}
+        {!rebinds.data && !rebinds.error && (
+          <p role="status">{t("عم نحمّل طلبات الأجهزة…")}</p>
+        )}
         {rebinds.data?.items.map((r: any) => (
           <div className="list-row" key={r.id}>
             <div>
@@ -2435,7 +2470,9 @@ function OwnerRecovery({
             </button>
           </div>
         ))}
-        {!rebinds.data?.items.length && <Empty />}
+        {rebinds.data && !rebinds.error && !rebinds.data.items.length && (
+          <Empty />
+        )}
       </section>
     </>
   );
