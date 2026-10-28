@@ -400,5 +400,10 @@
   "ما في مدير عام بهالشركة.": "This company has no general manager.",
   "عم نحمّل بيانات الشركات…": "Loading company data…",
   "عم نحمّل إعدادات المنصة…": "Loading platform settings…",
-  "عم نحمّل طلبات الأجهزة…": "Loading device requests…"
+  "عم نحمّل طلبات الأجهزة…": "Loading device requests…",
+  "تعذّر التحقق من جلسة الحضور. اضغط تحديث لإعادة المحاولة.": "Could not verify your attendance session. Press Refresh to try again.",
+  "عم نتحقق من جلسة الحضور…": "Checking your attendance session…",
+  "تعذّر تحميل سجل الحضور. اضغط تحديث لإعادة المحاولة.": "Could not load attendance history. Press Refresh to try again.",
+  "عم نحمّل سجل الحضور…": "Loading attendance history…",
+  "سجل الجلسات السابق بيتحمّل لما يرجع الإنترنت.": "Previous sessions will load when you are back online."
 }

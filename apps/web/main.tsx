@@ -1029,6 +1029,7 @@ function Attendance({
       .then(setOps);
   }, [revision, me.member.id, me.member.company_id]);
   const open = attendanceView(data?.items, ops);
+  const awaitingServer = online && !data;
   const perform = (action: "in" | "out") =>
     act(
       async () => {
@@ -1087,14 +1088,22 @@ function Attendance({
           <h2>{t("حضوري اليوم")}</h2>
           <p>{t("الموقع يُستخدم فقط وقت التسجيل.")}</p>
           <div className="timer" dir="ltr">
-            {open ? elapsedTime(open.in_at, now) : "00:00:00"}
+            {open
+              ? elapsedTime(open.in_at, now)
+              : awaitingServer
+                ? "—"
+                : "00:00:00"}
           </div>
           <p>
-            {open
-              ? open.provisional
-                ? t("وقت محلي مؤقت — بانتظار تحقق الخادم")
-                : t("وقت الجلسة الحالية")
-              : t("ما عندك جلسة مفتوحة")}
+            {awaitingServer
+              ? error
+                ? t("تعذّر التحقق من جلسة الحضور. اضغط تحديث لإعادة المحاولة.")
+                : t("عم نتحقق من جلسة الحضور…")
+              : open
+                ? open.provisional
+                  ? t("وقت محلي مؤقت — بانتظار تحقق الخادم")
+                  : t("وقت الجلسة الحالية")
+                : t("ما عندك جلسة مفتوحة")}
           </p>
           {!me.deviceBound ? (
             <>
@@ -1131,13 +1140,13 @@ function Attendance({
           ) : (
             <div className="punch-buttons">
               <button
-                disabled={busy || (online && !!open)}
+                disabled={busy || awaitingServer || (online && !!open)}
                 onClick={() => void perform("in")}
               >
                 {t("تسجيل دخول")}
               </button>
               <button
-                disabled={busy || (online && !open)}
+                disabled={busy || awaitingServer || (online && !open)}
                 className="secondary"
                 onClick={() => void perform("out")}
               >
@@ -1203,7 +1212,15 @@ function Attendance({
         <div className="card-title">
           <h2>{t("جلساتي الأخيرة")}</h2>
         </div>
-        {data?.items.length ? (
+        {!data ? (
+          <p className="padded" role="status">
+            {online
+              ? error
+                ? t("تعذّر تحميل سجل الحضور. اضغط تحديث لإعادة المحاولة.")
+                : t("عم نحمّل سجل الحضور…")
+              : t("سجل الجلسات السابق بيتحمّل لما يرجع الإنترنت.")}
+          </p>
+        ) : data.items.length ? (
           <div className="table-wrap">
             <table>
               <thead>
