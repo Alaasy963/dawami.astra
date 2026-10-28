@@ -373,6 +373,49 @@ test("real API workflow across isolated tenants and scoped recovery", async () =
     const ownerMe = await (
       await fetch(origin + "/api/auth/me", { headers: { Cookie: ownerCookie } })
     ).json();
+    const otherManager = sqlite
+      .prepare(
+        "SELECT id,company_id,local_hash,version FROM memberships WHERE company_id<>? AND role='gm' LIMIT 1",
+      )
+      .get(session.company)!;
+    expect(otherManager).toBeTruthy();
+    const ownerHeaders = {
+      Origin: origin,
+      Cookie: ownerCookie,
+      "X-CSRF-Token": ownerMe.csrf,
+      "Content-Type": "application/json",
+    };
+    const managersResponse = await fetch(
+      origin + "/api/owner/companies/" + session.company + "/managers",
+      { headers: ownerHeaders },
+    );
+    expect(managersResponse.status).toBe(200);
+    const managerList = await managersResponse.json();
+    expect(managerList.items.map((m: any) => m.id)).toContain(session.member);
+    expect(managerList.items.map((m: any) => m.id)).not.toContain(
+      otherManager.id,
+    );
+    const wrongCompanyReset = await fetch(
+      origin + "/api/owner/companies/" + session.company + "/reset-gm",
+      {
+        method: "POST",
+        headers: ownerHeaders,
+        body: JSON.stringify({
+          membershipId: otherManager.id,
+          pin: "wrong-company-temporary-pin",
+          reason: "Test stale selection from another company",
+        }),
+      },
+    );
+    expect(wrongCompanyReset.status).toBe(404);
+    expect(
+      sqlite
+        .prepare("SELECT local_hash,version FROM memberships WHERE id=?")
+        .get(otherManager.id),
+    ).toEqual({
+      local_hash: otherManager.local_hash,
+      version: otherManager.version,
+    });
     const reset = await fetch(
       origin + "/api/owner/companies/" + session.company + "/reset-gm",
       {

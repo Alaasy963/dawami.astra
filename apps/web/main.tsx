@@ -2270,7 +2270,33 @@ function OwnerRecovery({
   const companies = useData("/owner/companies", revision),
     rebinds = useData("/owner/rebinds", revision),
     [companyId, setCompanyId] = useState(""),
-    [managers, setManagers] = useState<any[]>([]);
+    [managerResult, setManagerResult] = useState<{
+      companyId: string;
+      items: any[];
+      error: string;
+    } | null>(null);
+  useEffect(() => {
+    let active = true;
+    setManagerResult(null);
+    if (!companyId) return;
+    api(`/owner/companies/${companyId}/managers`)
+      .then((x) => {
+        if (active) setManagerResult({ companyId, items: x.items, error: "" });
+      })
+      .catch((e) => {
+        if (active)
+          setManagerResult({ companyId, items: [], error: e.message });
+      });
+    return () => {
+      active = false;
+    };
+  }, [companyId, revision]);
+  const currentManagers =
+    managerResult?.companyId === companyId ? managerResult : null;
+  const managers = currentManagers?.items ?? [];
+  const canReset = Boolean(
+    companyId && managers.length && !currentManagers?.error,
+  );
   return (
     <>
       <div className="two-col">
@@ -2279,6 +2305,7 @@ function OwnerRecovery({
           <form
             onSubmit={(e) => {
               e.preventDefault();
+              if (!canReset || busy) return;
               const f = new FormData(e.currentTarget);
               void act(() =>
                 api(`/owner/companies/${companyId}/reset-gm`, {
@@ -2294,10 +2321,8 @@ function OwnerRecovery({
                 required
                 value={companyId}
                 onChange={(e) => {
+                  setManagerResult(null);
                   setCompanyId(e.target.value);
-                  api(`/owner/companies/${e.target.value}/managers`).then((x) =>
-                    setManagers(x.items),
-                  );
                 }}
               >
                 <option value="">{t("اختار الشركة")}</option>
@@ -2309,7 +2334,15 @@ function OwnerRecovery({
               </select>
             </Field>
             <Field label={t("المدير")}>
-              <select name="membershipId" required>
+              <select
+                key={companyId}
+                name="membershipId"
+                required
+                disabled={!canReset || busy}
+              >
+                {!managers.length && (
+                  <option value="">{t("اختار المدير")}</option>
+                )}
                 {managers.map((m) => (
                   <option key={m.id} value={m.id}>
                     {m.name}
@@ -2317,13 +2350,24 @@ function OwnerRecovery({
                 ))}
               </select>
             </Field>
+            {companyId && !currentManagers && (
+              <p role="status">{t("عم نحمّل مدراء الشركة…")}</p>
+            )}
+            {currentManagers?.error && (
+              <p className="error" role="alert">
+                {currentManagers.error}
+              </p>
+            )}
+            {currentManagers && !currentManagers.error && !managers.length && (
+              <p role="status">{t("ما في مدير عام بهالشركة.")}</p>
+            )}
             <Field label={t("PIN المؤقت")}>
               <input name="pin" type="password" minLength={8} required />
             </Field>
             <Field label={t("سبب التحقق وإعادة التعيين")}>
               <input name="reason" minLength={5} required />
             </Field>
-            <button disabled={busy}>{t("إعادة التعيين")}</button>
+            <button disabled={busy || !canReset}>{t("إعادة التعيين")}</button>
           </form>
           {companyId && <p dir="ltr">{companyId}</p>}
         </section>
