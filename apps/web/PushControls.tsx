@@ -77,7 +77,7 @@ export default function PushControls() {
     }
   };
   return (
-    <div>
+    <div className="push-controls">
       <p>
         {t(
           "على iPhone: أضف دوامي للشاشة الرئيسية وافتحه من الأيقونة، ثم فعّل الإشعارات.",

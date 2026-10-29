@@ -986,3 +986,34 @@ form > .two-col {
 .auth-card .field small:empty {
   display: none;
 }
+
+.notification-heading {
+  margin-bottom: 12px;
+}
+.push-controls {
+  min-width: 0;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+.push-controls p {
+  font-size: 14px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+.push-controls .actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.push-controls [role="status"]:empty {
+  display: none;
+}
+@media (max-width: 600px) {
+  .push-controls .actions {
+    flex-direction: column;
+  }
+  .push-controls .actions button {
+    width: 100%;
+    white-space: normal;
+  }
+}

@@ -1919,10 +1919,10 @@ function Notifications({ revision, act }: { revision: number; act: Action }) {
   }, []);
   return (
     <section className="card padded">
-      <div className="card-title">
+      <div className="notification-heading">
         <h2>{t("مركز الإشعارات")}</h2>
-        <PushControls />
       </div>
+      <PushControls />
       <p className="error">{error}</p>
       {location && (
         <Suspense fallback={<Empty />}>
