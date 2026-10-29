@@ -63,7 +63,26 @@ export async function api(
     },
     body: body ? JSON.stringify(body) : undefined,
   });
-  const data: any = await response.json();
+  let data: any;
+  try {
+    data = await response.json();
+  } catch {
+    // Preserve HTTP authorization failures even when an edge proxy sends HTML.
+    if (!response.ok)
+      throw new ApiError(
+        t("تعذّر الاتصال بالخادم. جرّب مجدداً."),
+        response.status,
+      );
+    throw new Error(t("وصل رد غير صالح من الخادم. جرّب مجدداً."));
+  }
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    if (!response.ok)
+      throw new ApiError(
+        t("تعذّر الاتصال بالخادم. جرّب مجدداً."),
+        response.status,
+      );
+    throw new Error(t("وصل رد غير صالح من الخادم. جرّب مجدداً."));
+  }
   if (!response.ok) {
     const fieldErrors: Record<string, string> = {};
     for (const issue of Array.isArray(data.issues) ? data.issues : []) {
@@ -75,7 +94,7 @@ export async function api(
         fieldErrors[issue.path[0]] ??= t(issue.message);
     }
     throw new ApiError(
-      t(data.error ?? "تعذّر الاتصال"),
+      t(typeof data.error === "string" ? data.error : "تعذّر الاتصال"),
       response.status,
       fieldErrors,
     );

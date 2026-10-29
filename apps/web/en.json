@@ -405,5 +405,7 @@
   "عم نتحقق من جلسة الحضور…": "Checking your attendance session…",
   "تعذّر تحميل سجل الحضور. اضغط تحديث لإعادة المحاولة.": "Could not load attendance history. Press Refresh to try again.",
   "عم نحمّل سجل الحضور…": "Loading attendance history…",
-  "سجل الجلسات السابق بيتحمّل لما يرجع الإنترنت.": "Previous sessions will load when you are back online."
+  "سجل الجلسات السابق بيتحمّل لما يرجع الإنترنت.": "Previous sessions will load when you are back online.",
+  "تعذّر الاتصال بالخادم. جرّب مجدداً.": "Could not connect to the server. Please try again.",
+  "وصل رد غير صالح من الخادم. جرّب مجدداً.": "The server returned an invalid response. Please try again."
 }
