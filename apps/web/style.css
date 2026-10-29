@@ -56,7 +56,7 @@ a:focus-visible,
 input:focus-visible,
 select:focus-visible,
 textarea:focus-visible {
-  outline: 3px solid #60a5fa;
+  outline: 3px solid var(--primary);
   outline-offset: 3px;
 }
 input,
@@ -560,7 +560,7 @@ form > .two-col {
   align-items: center;
   flex-direction: column;
   gap: 12px;
-  color: #94a3b8;
+  color: var(--muted);
 }
 .empty p {
   font-size: 13px;
@@ -659,7 +659,8 @@ form > .two-col {
 }
 .skip:focus {
   top: 8px;
-  background: #fff;
+  background: var(--surface);
+  color: var(--primary);
   padding: 10px;
 }
 .auth {
@@ -1016,4 +1017,27 @@ form > .two-col {
     width: 100%;
     white-space: normal;
   }
+}
+
+[data-theme="dark"] .error {
+  color: #fca5a5;
+}
+[data-theme="dark"] .connection {
+  color: #86efac;
+}
+[data-theme="dark"] .connection.offline {
+  color: #fcd34d;
+}
+[data-theme="dark"] textarea {
+  border-color: #42516a;
+}
+[data-theme="dark"] .auth-story {
+  background: #162540;
+}
+[data-theme="dark"] .auth-story p {
+  color: #b2c5e1;
+}
+[data-theme="dark"] .story-card {
+  background: var(--surface);
+  border-color: var(--border);
 }
