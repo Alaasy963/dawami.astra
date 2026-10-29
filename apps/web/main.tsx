@@ -48,6 +48,7 @@ import {
 import "./style.css";
 import AppUpdate from "./AppUpdate";
 import { viewContext } from "./view-context";
+import { notificationLocation } from "./notification-location";
 import PushControls from "./PushControls";
 import { attendanceView, elapsedTime } from "./attendance-view";
 import {
@@ -1906,16 +1907,7 @@ function Notifications({ revision, act }: { revision: number; act: Action }) {
       lng: number;
     } | null>(null);
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    if (params.get("view") === "location") {
-      const lat = Number(params.get("lat")),
-        lng = Number(params.get("lng"));
-      if (Number.isFinite(lat) && Number.isFinite(lng))
-        setLocation({
-          lat,
-          lng,
-        });
-    }
+    setLocation(notificationLocation(window.location.href));
   }, []);
   return (
     <section className="card padded">
@@ -1937,12 +1929,7 @@ function Notifications({ revision, act }: { revision: number; act: Action }) {
             onClick={() =>
               void act(async () => {
                 await api(`/notifications/${n.id}/read`, {});
-                const p = new URL(n.url, window.location.origin).searchParams;
-                if (p.has("lat"))
-                  setLocation({
-                    lat: Number(p.get("lat")),
-                    lng: Number(p.get("lng")),
-                  });
+                setLocation(notificationLocation(n.url));
               }, t("تمت قراءة الإشعار"))
             }
           >
