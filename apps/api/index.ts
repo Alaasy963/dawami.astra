@@ -1,3 +1,9 @@
+import { shiftSchema, shiftSpan } from "../../packages/domain/work-time";
+import {
+  workPlanSchema,
+  workDateSchema,
+  companyDate,
+} from "../../packages/domain/work-plan";
 import { Hono } from "hono";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import { HTTPException } from "hono/http-exception";
@@ -132,7 +138,7 @@ app.onError((e, c) => {
       400,
     );
   if (
-    /push_identity_conflict|rebind_already_decided|attendance_already_closed|attendance_overlap|memberships.company_id, memberships.device_hash/.test(
+    /shift_versions.company_id|work_plan_versions.company_id|push_identity_conflict|rebind_already_decided|attendance_already_closed|attendance_overlap|memberships.company_id, memberships.device_hash/.test(
       e.message,
     )
   )
@@ -816,6 +822,213 @@ app.use("/api/*", async (c, next) => {
     fail(423, "انتهى الاشتراك أو توقفت الشركة. تواصل مع مالك دوامي للتجديد");
   await next();
 });
+const revisionNumber = z.number().int().nonnegative();
+app.get("/api/shifts", async (c) => {
+  roles(c, "gm", "am", "manager");
+  const items = await stmt(
+    c.env,
+    `SELECT s.* FROM shift_versions s WHERE company_id=? AND NOT EXISTS
+    (SELECT 1 FROM shift_versions newer WHERE newer.company_id=s.company_id AND newer.template_id=s.template_id AND newer.version>s.version)
+    ORDER BY name`,
+    c.get("company").id,
+  ).all();
+  return c.json({ items: items.results });
+});
+app.post("/api/shifts", async (c) => {
+  roles(c, "gm", "am", "manager");
+  const b = z
+    .object({ shift: shiftSchema, reason: z.string().trim().min(3).max(500) })
+    .strict()
+    .parse(await c.req.json());
+  const span = shiftSpan(b.shift),
+    templateId = id(),
+    cid = c.get("company").id;
+  await c.env.DB.batch([
+    stmt(
+      c.env,
+      "INSERT INTO shift_versions(id,company_id,template_id,version,name,start_minute,end_minute,actor,created_at) VALUES(?,?,?,1,?,?,?,?,?)",
+      id(),
+      cid,
+      templateId,
+      span.name,
+      span.startMinute,
+      span.endMinute,
+      c.get("member").id,
+      Date.now(),
+    ),
+    audit(
+      c.env,
+      c.get("session"),
+      cid,
+      "shift.create",
+      templateId,
+      b.reason,
+      b.shift,
+    ),
+  ]);
+  return c.json({ id: templateId, version: 1 }, 201);
+});
+app.put("/api/shifts/:id", async (c) => {
+  roles(c, "gm", "am", "manager");
+  const b = z
+    .object({
+      shift: shiftSchema,
+      expectedVersion: revisionNumber,
+      archived: z.boolean(),
+      reason: z.string().trim().min(3).max(500),
+    })
+    .strict()
+    .parse(await c.req.json());
+  const cid = c.get("company").id,
+    templateId = uuid.parse(c.req.param("id"));
+  const old = await stmt(
+    c.env,
+    "SELECT * FROM shift_versions WHERE company_id=? AND template_id=? ORDER BY version DESC LIMIT 1",
+    cid,
+    templateId,
+  ).first<any>();
+  if (!old) fail(404, "الشفت غير موجود");
+  // Templates are company-wide: scoped managers may create, but only change their own.
+  if (c.get("member").role === "manager" && old.actor !== c.get("member").id)
+    fail(403, "ما عندك صلاحية تعديل هالشفت");
+  if (old.version !== b.expectedVersion)
+    fail(409, "تغيّر الجدول. حدّث الصفحة قبل الحفظ");
+  const span = shiftSpan(b.shift);
+  await c.env.DB.batch([
+    stmt(
+      c.env,
+      "INSERT INTO shift_versions(id,company_id,template_id,version,name,start_minute,end_minute,archived,actor,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+      id(),
+      cid,
+      templateId,
+      old.version + 1,
+      span.name,
+      span.startMinute,
+      span.endMinute,
+      Number(b.archived),
+      c.get("member").id,
+      Date.now(),
+    ),
+    audit(
+      c.env,
+      c.get("session"),
+      cid,
+      "shift.revise",
+      templateId,
+      b.reason,
+      b,
+      old,
+    ),
+  ]);
+  return c.json({ id: templateId, version: old.version + 1 });
+});
+app.get("/api/members/:id/work-plan", async (c) => {
+  const target = await allowedTarget(c, uuid.parse(c.req.param("id")));
+  const date = workDateSchema.parse(
+    c.req.query("date") ?? companyDate(c.get("company").timezone),
+  );
+  const plan = await stmt(
+    c.env,
+    "SELECT * FROM work_plan_versions WHERE company_id=? AND membership_id=? AND effective_from<=? ORDER BY effective_from DESC,version DESC LIMIT 1",
+    target.company_id,
+    target.id,
+    date,
+  ).first<any>();
+  const latest = await stmt(
+    c.env,
+    "SELECT COALESCE(MAX(version),0) AS version FROM work_plan_versions WHERE company_id=? AND membership_id=?",
+    target.company_id,
+    target.id,
+  ).first<any>();
+  return c.json({
+    plan: plan ? { ...plan, plan: JSON.parse(plan.plan) } : null,
+    latestVersion: latest.version,
+  });
+});
+app.post("/api/members/:id/work-plan", async (c) => {
+  roles(c, "gm", "am", "manager");
+  const target = await allowedTarget(c, uuid.parse(c.req.param("id")));
+  if (target.status !== "active") fail(409, "العضوية غير فعالة");
+  if (c.get("member").role === "manager" && target.role !== "worker")
+    fail(403, "تعيين خطة المدير من صلاحية المدير العام أو المساعد");
+  const b = z
+    .object({
+      effectiveFrom: workDateSchema,
+      expectedVersion: revisionNumber,
+      plan: workPlanSchema,
+      reason: z.string().trim().min(3).max(500),
+    })
+    .strict()
+    .parse(await c.req.json());
+  const co = c.get("company");
+  if (b.effectiveFrom <= companyDate(co.timezone))
+    fail(400, "ابدأ الخطة من يوم قادم للحفاظ على سجل اليوم والماضي");
+  const old = await stmt(
+    c.env,
+    "SELECT * FROM work_plan_versions WHERE company_id=? AND membership_id=? ORDER BY version DESC LIMIT 1",
+    co.id,
+    target.id,
+  ).first<any>();
+  const version = old?.version ?? 0;
+  if (version !== b.expectedVersion)
+    fail(409, "تغيّر الجدول. حدّث الصفحة قبل الحفظ");
+  const planId = id(),
+    now = Date.now(),
+    notificationId = id();
+  const payload = {
+    title: "تغيّر جدول دوامك",
+    body: `خطة جديدة اعتباراً من ${b.effectiveFrom}`,
+    url: "/?view=schedule",
+  };
+  await c.env.DB.batch([
+    stmt(
+      c.env,
+      "INSERT INTO work_plan_versions(id,company_id,membership_id,version,effective_from,timezone,plan,actor,reason,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+      planId,
+      co.id,
+      target.id,
+      version + 1,
+      b.effectiveFrom,
+      co.timezone,
+      JSON.stringify(b.plan),
+      c.get("member").id,
+      b.reason,
+      now,
+    ),
+    audit(
+      c.env,
+      c.get("session"),
+      co.id,
+      "work_plan.assign",
+      target.id,
+      b.reason,
+      b,
+      old,
+    ),
+    stmt(
+      c.env,
+      "INSERT INTO notifications(id,company_id,recipient,title,body,url,created_at) VALUES(?,?,?,?,?,?,?)",
+      notificationId,
+      co.id,
+      target.id,
+      payload.title,
+      payload.body,
+      payload.url,
+      now,
+    ),
+    stmt(
+      c.env,
+      "INSERT INTO notification_outbox(id,company_id,recipient,payload,attempts,next_at,status) VALUES(?,?,?,?,0,?,'pending')",
+      id(),
+      co.id,
+      target.id,
+      JSON.stringify(payload),
+      now,
+    ),
+  ]);
+  return c.json({ id: planId, version: version + 1 }, 201);
+});
+
 app.get("/api/company", (c) => c.json(c.get("company")));
 
 app.get("/api/company/logo", async (c) => {

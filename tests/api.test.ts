@@ -103,6 +103,183 @@ test("real API workflow across isolated tenants and scoped recovery", async () =
       "X-CSRF-Token": me.csrf,
       "Content-Type": "application/json",
     };
+    // Phase two: exercise real routes, persisted versions, scope, and atomic audit.
+    const scheduleRequest = (
+      path: string,
+      body?: unknown,
+      method = body ? "POST" : "GET",
+    ) =>
+      app.request(
+        origin + "/api" + path,
+        { method, headers, ...(body ? { body: JSON.stringify(body) } : {}) },
+        env,
+      );
+    const shiftBody = {
+      shift: { name: "Night", start: "20:00", end: "04:00" },
+      reason: "Test schedule",
+    };
+    const createdShift = await scheduleRequest("/shifts", shiftBody);
+    expect(createdShift.status).toBe(201);
+    const template = (await createdShift.json()) as any;
+    expect(
+      (
+        await scheduleRequest(
+          `/shifts/${template.id}`,
+          { ...shiftBody, expectedVersion: 1, archived: false },
+          "PUT",
+        )
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await scheduleRequest(
+          `/shifts/${template.id}`,
+          { ...shiftBody, expectedVersion: 1, archived: false },
+          "PUT",
+        )
+      ).status,
+    ).toBe(409);
+    const planBody = {
+      effectiveFrom: "2099-01-01",
+      expectedVersion: 0,
+      reason: "Future plan",
+      plan: {
+        schedule: {
+          mode: "fixed",
+          days: [shiftBody.shift, null, null, null, null, null, null],
+        },
+        breakPolicy: { thresholdMinutes: 360, deductionMinutes: 30 },
+      },
+    };
+    const planPath = `/members/${me.member.id}/work-plan`;
+    expect(
+      (
+        await scheduleRequest(planPath, {
+          ...planBody,
+          effectiveFrom: "2000-01-01",
+        })
+      ).status,
+    ).toBe(400);
+    expect((await scheduleRequest(planPath, planBody)).status).toBe(201);
+    expect((await scheduleRequest(planPath, planBody)).status).toBe(409);
+    const assigned = (await (
+      await scheduleRequest(planPath + "?date=2099-01-01")
+    ).json()) as any;
+    expect(assigned.plan.plan.schedule.days[0].start).toBe("20:00");
+    expect(
+      (
+        (await (
+          await scheduleRequest(planPath + "?date=2098-12-31")
+        ).json()) as any
+      ).plan,
+    ).toBeNull();
+    expect(
+      sqlite
+        .prepare(
+          "SELECT COUNT(*) AS n FROM audit_logs WHERE action='work_plan.assign' AND target=?",
+        )
+        .get(me.member.id)?.n,
+    ).toBe(1);
+    expect(
+      sqlite
+        .prepare(
+          "SELECT COUNT(*) AS n FROM notifications WHERE recipient=? AND title='تغيّر جدول دوامك'",
+        )
+        .get(me.member.id)?.n,
+    ).toBe(1);
+    const foreign = sqlite
+      .prepare("SELECT id FROM memberships WHERE company_id<>? LIMIT 1")
+      .get(me.member.company_id)!;
+    expect(
+      (await scheduleRequest(`/members/${foreign.id}/work-plan`)).status,
+    ).toBe(404);
+    expect(
+      (await scheduleRequest(`/members/${foreign.id}/work-plan`, planBody))
+        .status,
+    ).toBe(404);
+    // A failed audit must roll back the plan and notification as a unit.
+    sqlite.exec(
+      "CREATE TRIGGER test_schedule_audit_failure BEFORE INSERT ON audit_logs WHEN NEW.action='work_plan.assign' BEGIN SELECT RAISE(ABORT,'simulated audit failure'); END;",
+    );
+    expect(
+      (
+        await scheduleRequest(planPath, {
+          ...planBody,
+          expectedVersion: 1,
+          effectiveFrom: "2099-02-01",
+        })
+      ).status,
+    ).toBe(500);
+    sqlite.exec("DROP TRIGGER test_schedule_audit_failure");
+    expect(
+      sqlite
+        .prepare(
+          "SELECT COUNT(*) AS n FROM work_plan_versions WHERE membership_id=?",
+        )
+        .get(me.member.id)?.n,
+    ).toBe(1);
+    sqlite
+      .prepare("UPDATE memberships SET role='worker' WHERE id=?")
+      .run(me.member.id);
+    expect((await scheduleRequest(planPath + "?date=2099-01-01")).status).toBe(
+      200,
+    );
+    expect((await scheduleRequest(planPath, planBody)).status).toBe(403);
+    expect((await scheduleRequest("/shifts", shiftBody)).status).toBe(403);
+    const otherLocal = sqlite
+      .prepare(
+        "SELECT id FROM memberships WHERE company_id=? AND id<>? LIMIT 1",
+      )
+      .get(me.member.company_id, me.member.id)!;
+    expect(otherLocal).toBeTruthy();
+    expect(
+      (await scheduleRequest(`/members/${otherLocal.id}/work-plan`)).status,
+    ).toBe(403);
+    sqlite
+      .prepare("UPDATE memberships SET role='manager' WHERE id=?")
+      .run(me.member.id);
+    expect(
+      (await scheduleRequest(`/members/${otherLocal.id}/work-plan`, planBody))
+        .status,
+    ).toBe(403);
+    const scopedUser = crypto.randomUUID(),
+      scopedMember = crypto.randomUUID(),
+      scopedDepartment = crypto.randomUUID();
+    sqlite
+      .prepare("INSERT INTO users(id,phone,name,password_hash) VALUES(?,?,?,?)")
+      .run(scopedUser, "+999" + Date.now(), "Schedule worker", "unused");
+    sqlite
+      .prepare("INSERT INTO departments(id,company_id,name) VALUES(?,?,?)")
+      .run(scopedDepartment, me.member.company_id, "Schedule scope");
+    sqlite
+      .prepare(
+        "INSERT INTO memberships(id,company_id,user_id,role,department_id) VALUES(?,?,?,'worker',?)",
+      )
+      .run(scopedMember, me.member.company_id, scopedUser, scopedDepartment);
+    sqlite
+      .prepare(
+        "INSERT INTO manager_scopes(id,company_id,membership_id,department_id) VALUES(?,?,?,?)",
+      )
+      .run(
+        crypto.randomUUID(),
+        me.member.company_id,
+        me.member.id,
+        scopedDepartment,
+      );
+    expect(
+      (await scheduleRequest(`/members/${scopedMember}/work-plan`, planBody))
+        .status,
+    ).toBe(201);
+    expect(
+      (
+        await scheduleRequest(
+          `/members/${scopedMember}/work-plan?date=2099-01-01`,
+        )
+      ).status,
+    ).toBe(200);
+    sqlite
+      .prepare("UPDATE memberships SET role='gm' WHERE id=?")
+      .run(me.member.id);
     const missingPush = await app.request(
       origin + "/api/push/test",
       { method: "POST", headers, body: "{}" },
