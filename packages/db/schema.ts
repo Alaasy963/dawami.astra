@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import {
   sqliteTable,
   text,
@@ -5,6 +6,8 @@ import {
   real,
   uniqueIndex,
   index,
+  foreignKey,
+  check,
 } from "drizzle-orm/sqlite-core";
 export const users = sqliteTable("users", {
   id: text().primaryKey(),
@@ -195,3 +198,88 @@ export const attendanceReviews = sqliteTable("attendance_reviews", {
   reason: text().notNull(),
   decidedAt: integer("decided_at").notNull(),
 });
+
+// Append-only versions: a saved worker plan owns its schedule snapshot.
+export const shiftVersions = sqliteTable(
+  "shift_versions",
+  {
+    id: text().primaryKey(),
+    companyId: text("company_id")
+      .notNull()
+      .references(() => companies.id),
+    templateId: text("template_id").notNull(),
+    version: integer().notNull(),
+    name: text().notNull(),
+    startMinute: integer("start_minute").notNull(),
+    endMinute: integer("end_minute").notNull(),
+    archived: integer().notNull().default(0),
+    actor: text().notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("shift_version_number").on(
+      t.companyId,
+      t.templateId,
+      t.version,
+    ),
+    foreignKey({
+      columns: [t.companyId, t.actor],
+      foreignColumns: [memberships.companyId, memberships.id],
+    }),
+    check(
+      "shift_valid_minutes",
+      sql`${t.startMinute} BETWEEN 0 AND 1439 AND ${t.endMinute} BETWEEN 0 AND 1439 AND ${t.startMinute} <> ${t.endMinute}`,
+    ),
+    check("shift_positive_version", sql`${t.version} > 0`),
+    check("shift_archive_boolean", sql`${t.archived} IN (0,1)`),
+  ],
+);
+
+export const workPlanVersions = sqliteTable(
+  "work_plan_versions",
+  {
+    id: text().primaryKey(),
+    companyId: text("company_id")
+      .notNull()
+      .references(() => companies.id),
+    membershipId: text("membership_id").notNull(),
+    version: integer().notNull(),
+    effectiveFrom: text("effective_from").notNull(),
+    timezone: text().notNull(),
+    // Validated plan JSON: copied shift times, weekdays, targets and break policy.
+    plan: text().notNull(),
+    actor: text().notNull(),
+    reason: text().notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("work_plan_version_number").on(
+      t.companyId,
+      t.membershipId,
+      t.version,
+    ),
+    index("work_plan_effective").on(
+      t.companyId,
+      t.membershipId,
+      t.effectiveFrom,
+      t.version,
+    ),
+    foreignKey({
+      columns: [t.companyId, t.membershipId],
+      foreignColumns: [memberships.companyId, memberships.id],
+    }),
+    foreignKey({
+      columns: [t.companyId, t.actor],
+      foreignColumns: [memberships.companyId, memberships.id],
+    }),
+    check("work_plan_positive_version", sql`${t.version} > 0`),
+    check(
+      "work_plan_object",
+      sql`json_valid(${t.plan}) AND json_type(${t.plan}) = 'object'`,
+    ),
+    check(
+      "work_plan_date",
+      sql`length(${t.effectiveFrom}) = 10 AND ${t.effectiveFrom} GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]' AND date(${t.effectiveFrom}, '+0 days') IS NOT NULL AND date(${t.effectiveFrom}, '+0 days') = ${t.effectiveFrom}`,
+    ),
+  ],
+);
