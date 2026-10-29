@@ -1910,17 +1910,20 @@ function Notifications({ revision, act }: { revision: number; act: Action }) {
     setLocation(notificationLocation(window.location.href));
   }, []);
   return (
-    <section className="card padded">
+    <section className="card padded" aria-busy={!data && !error}>
       <div className="notification-heading">
         <h2>{t("مركز الإشعارات")}</h2>
       </div>
       <PushControls />
-      <p className="error">{error}</p>
+      <p className="error" role="alert">
+        {error}
+      </p>
       {location && (
         <Suspense fallback={<Empty />}>
           <OptionalMap {...location} />
         </Suspense>
       )}
+      {!data && !error && <p role="status">{t("عم نحمّل الإشعارات…")}</p>}
       {data?.items.length ? (
         data.items.map((n: any) => (
           <button
@@ -1943,9 +1946,9 @@ function Notifications({ revision, act }: { revision: number; act: Action }) {
             </div>
           </button>
         ))
-      ) : (
+      ) : data && !error ? (
         <Empty text={t("الإشعارات الجديدة بتظهر هون")} />
-      )}
+      ) : null}
     </section>
   );
 }
@@ -1960,7 +1963,7 @@ function AttendanceReviews({
 }) {
   const { data, error } = useData("/attendance/reviews", revision);
   return (
-    <section className="card padded">
+    <section className="card padded" aria-busy={!data && !error}>
       <h2>{t("مراجعة أحداث الحضور")}</h2>
       <p>
         {t(
@@ -1970,6 +1973,7 @@ function AttendanceReviews({
       <p className="error" role="alert">
         {error}
       </p>
+      {!data && !error && <p role="status">{t("عم نحمّل مراجعات الحضور…")}</p>}
       {data?.items.length ? (
         data.items.map((r: any) => (
           <form
@@ -2037,18 +2041,21 @@ function AttendanceReviews({
             </button>
           </form>
         ))
-      ) : (
+      ) : data && !error ? (
         <Empty />
-      )}
+      ) : null}
     </section>
   );
 }
 function Devices({ revision, act }: { revision: number; act: Action }) {
   const { data, error } = useData("/device/requests", revision);
   return (
-    <section className="card padded">
+    <section className="card padded" aria-busy={!data && !error}>
       <h2>{t("طلبات إعادة ربط الأجهزة")}</h2>
-      <p className="error">{error}</p>
+      <p className="error" role="alert">
+        {error}
+      </p>
+      {!data && !error && <p role="status">{t("عم نحمّل طلبات الأجهزة…")}</p>}
       {data?.items.length ? (
         data.items.map((r: any) => (
           <div className="list-row" key={r.id}>
@@ -2065,9 +2072,9 @@ function Devices({ revision, act }: { revision: number; act: Action }) {
             </button>
           </div>
         ))
-      ) : (
+      ) : data && !error ? (
         <Empty />
-      )}
+      ) : null}
     </section>
   );
 }

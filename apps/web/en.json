@@ -407,5 +407,7 @@
   "عم نحمّل سجل الحضور…": "Loading attendance history…",
   "سجل الجلسات السابق بيتحمّل لما يرجع الإنترنت.": "Previous sessions will load when you are back online.",
   "تعذّر الاتصال بالخادم. جرّب مجدداً.": "Could not connect to the server. Please try again.",
-  "وصل رد غير صالح من الخادم. جرّب مجدداً.": "The server returned an invalid response. Please try again."
+  "وصل رد غير صالح من الخادم. جرّب مجدداً.": "The server returned an invalid response. Please try again.",
+  "عم نحمّل الإشعارات…": "Loading notifications…",
+  "عم نحمّل مراجعات الحضور…": "Loading attendance reviews…"
 }
