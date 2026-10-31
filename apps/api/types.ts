@@ -44,6 +44,8 @@ export type Company = {
   session_days: number;
   gps_accuracy: number;
   logo_key: string | null;
+  overtime_percent: number;
+  weekend_days: string;
 };
 export type Bindings = {
   Bindings: Env;

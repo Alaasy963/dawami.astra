@@ -34,6 +34,8 @@ export const companies = sqliteTable("companies", {
   sessionDays: integer("session_days").notNull().default(7),
   gpsAccuracy: integer("gps_accuracy").notNull().default(100),
   logoKey: text("logo_key"),
+  overtimePercent: real("overtime_percent").notNull().default(0),
+  weekendDays: text("weekend_days").notNull().default("[4]"),
 });
 export const branches = sqliteTable(
   "branches",
@@ -78,6 +80,7 @@ export const memberships = sqliteTable(
     localHash: text("local_hash"),
     mustChange: integer("must_change").notNull().default(0),
     version: integer().notNull().default(1),
+    timeRevision: integer("time_revision").notNull().default(0),
   },
   (t) => [
     uniqueIndex("membership_identity").on(t.companyId, t.userId),
@@ -310,5 +313,69 @@ export const earlyTimeReviews = sqliteTable(
     }),
     check("early_review_decision", sql`${t.decision} IN ('approve','reject')`),
     check("early_review_bounds", sql`${t.inAt} < ${t.shiftStart}`),
+  ],
+);
+
+export const manualTimeRequests = sqliteTable(
+  "manual_time_requests",
+  {
+    id: text().primaryKey(),
+    companyId: text("company_id").notNull(),
+    membershipId: text("membership_id").notNull(),
+    planId: text("plan_id")
+      .notNull()
+      .references(() => workPlanVersions.id),
+    workDate: text("work_date").notNull(),
+    inAt: integer("in_at").notNull(),
+    outAt: integer("out_at").notNull(),
+    reason: text().notNull(),
+    status: text().notNull().default("pending"),
+    reviewer: text(),
+    reviewReason: text("review_reason"),
+    createdAt: integer("created_at").notNull(),
+    decidedAt: integer("decided_at"),
+  },
+  (t) => [
+    foreignKey({
+      columns: [t.companyId, t.membershipId],
+      foreignColumns: [memberships.companyId, memberships.id],
+    }),
+    index("manual_time_member").on(t.companyId, t.membershipId, t.inAt),
+    check(
+      "manual_time_status",
+      sql`${t.status} IN ('pending','approved','rejected')`,
+    ),
+    check(
+      "manual_time_duration",
+      sql`${t.outAt}>${t.inAt} AND ${t.outAt}-${t.inAt}<=86400000`,
+    ),
+  ],
+);
+export const timesheets = sqliteTable(
+  "timesheets",
+  {
+    id: text().primaryKey(),
+    companyId: text("company_id").notNull(),
+    membershipId: text("membership_id").notNull(),
+    weekStart: text("week_start").notNull(),
+    snapshot: text().notNull(),
+    fingerprint: text().notNull(),
+    sourceRevision: integer("source_revision").notNull().default(0),
+    status: text().notNull().default("pending"),
+    reviewer: text(),
+    reason: text(),
+    createdAt: integer("created_at").notNull(),
+    decidedAt: integer("decided_at"),
+  },
+  (t) => [
+    foreignKey({
+      columns: [t.companyId, t.membershipId],
+      foreignColumns: [memberships.companyId, memberships.id],
+    }),
+    index("timesheet_member").on(t.companyId, t.membershipId, t.weekStart),
+    check(
+      "timesheet_status",
+      sql`${t.status} IN ('pending','approved','rejected')`,
+    ),
   ],
 );

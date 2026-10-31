@@ -32,6 +32,8 @@ export const workPlanSchema = z
         .refine((s) => s.period !== "daily" || s.minutes <= 1440),
     ]),
     breakPolicy: breakPolicySchema,
+    reminderGraceMinutes: z.number().int().min(0).max(120).default(5),
+    graceMinutes: z.number().int().min(0).max(240).default(10),
     cutoff: z
       .string()
       .regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/)

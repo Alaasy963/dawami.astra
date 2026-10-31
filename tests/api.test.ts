@@ -1,3 +1,4 @@
+import { queueShiftReminders } from "../apps/api/shift-reminders";
 import { test, vi, expect } from "vitest";
 import { DatabaseSync } from "node:sqlite";
 import { readFileSync, readdirSync } from "node:fs";
@@ -13,6 +14,7 @@ test("real API workflow across isolated tenants and scoped recovery", async () =
     .filter((x) => x.endsWith(".sql"))
     .sort())
     sqlite.exec(readFileSync("packages/db/migrations/" + file, "utf8"));
+  let executedQueries = 0;
   class Statement {
     args: any[] = [];
     constructor(public sql: string) {}
@@ -22,10 +24,12 @@ test("real API workflow across isolated tenants and scoped recovery", async () =
       return next;
     }
     async first(column?: string) {
+      executedQueries++;
       const row = sqlite.prepare(this.sql).get(...this.args);
       return row ? (column ? row[column] : row) : null;
     }
     async all(options?: any) {
+      executedQueries++;
       const prepared = sqlite.prepare(this.sql);
       if (options?.columnNames) prepared.setReturnArrays(true);
       const results = prepared.all(...this.args);
@@ -37,6 +41,7 @@ test("real API workflow across isolated tenants and scoped recovery", async () =
       return prepared.all(...this.args);
     }
     async run() {
+      executedQueries++;
       const result = sqlite.prepare(this.sql).run(...this.args);
       return {
         success: true,
@@ -208,6 +213,14 @@ test("real API workflow across isolated tenants and scoped recovery", async () =
       )
     ).json()) as any;
     expect(noPlanSummary.status).toBe("no_plan");
+    const unknownWeek = (await (
+      await scheduleRequest(
+        `/members/${me.member.id}/workweek-summary?date=2098-01-01`,
+      )
+    ).json()) as any;
+    expect(unknownWeek.actualMs).toBeNull();
+    expect(unknownWeek.requiredMs).toBeNull();
+    expect(unknownWeek.complete).toBe(false);
     const fixtureBranch = sqlite
       .prepare("SELECT id FROM branches WHERE company_id=? LIMIT 1")
       .get(me.member.company_id)!;
@@ -436,6 +449,326 @@ test("real API workflow across isolated tenants and scoped recovery", async () =
     expect(() =>
       sqlite.exec("UPDATE early_time_reviews SET decision='reject'"),
     ).toThrow(/append_only/);
+
+    // Full manual-time -> manager decision -> immutable weekly timesheet flow.
+    const pastPlanId = crypto.randomUUID();
+    const pastPlan = {
+      schedule: {
+        mode: "fixed",
+        days: Array(7).fill({ name: "Regular", start: "08:00", end: "16:00" }),
+      },
+      breakPolicy: { thresholdMinutes: 360, deductionMinutes: 30 },
+      cutoff: "04:00",
+    };
+    sqlite
+      .prepare(
+        "INSERT INTO work_plan_versions(id,company_id,membership_id,version,effective_from,timezone,plan,actor,reason,created_at) VALUES(?,?,?,2,'2026-10-01','UTC',?,?,'Test fixture',1)",
+      )
+      .run(
+        pastPlanId,
+        me.member.company_id,
+        scopedMember,
+        JSON.stringify(pastPlan),
+        me.member.id,
+      );
+    const workerSid = crypto.randomUUID(),
+      workerCsrf = crypto.randomUUID();
+    kv.set(
+      workerSid,
+      JSON.stringify({
+        userId: scopedUser,
+        membershipId: scopedMember,
+        companyId: me.member.company_id,
+        mode: "global",
+        version: 1,
+        expires: Date.now() + 3600000,
+        csrf: workerCsrf,
+        device: "fixture",
+      }),
+    );
+    const workerHeaders = {
+      ...headers,
+      Cookie: `dawami_session=${workerSid}`,
+      "X-CSRF-Token": workerCsrf,
+    };
+    const workerRequest = (path: string, body?: any) =>
+      app.request(
+        origin + "/api" + path,
+        {
+          method: body ? "POST" : "GET",
+          headers: workerHeaders,
+          ...(body ? { body: JSON.stringify(body) } : {}),
+        },
+        env,
+      );
+    const manualBody = {
+      date: "2026-10-12",
+      autofill: true,
+      reason: "Forgot clock in at work",
+    };
+    sqlite
+      .prepare("UPDATE memberships SET role='gm' WHERE id=?")
+      .run(me.member.id);
+    expect(me.member.role).toBe("gm");
+    expect((await scheduleRequest("/manual-time", manualBody)).status).toBe(
+      403,
+    );
+    expect(
+      (await scheduleRequest("/timesheets", { date: "2026-10-12" })).status,
+    ).toBe(403);
+    sqlite
+      .prepare("UPDATE memberships SET role='manager' WHERE id=?")
+      .run(me.member.id);
+    const requestResult = await workerRequest("/manual-time", manualBody);
+    expect(requestResult.status).toBe(201);
+    const manualId = ((await requestResult.json()) as any).id;
+    expect((await workerRequest("/manual-time", manualBody)).status).toBe(409);
+    expect(
+      (
+        await workerRequest(`/manual-time/${manualId}/review`, {
+          decision: "approved",
+          reason: "Cannot self approve",
+        })
+      ).status,
+    ).toBe(403);
+    expect(
+      (await workerRequest("/timesheets", { date: "2026-10-12" })).status,
+    ).toBe(409);
+    expect(
+      (
+        await scheduleRequest(`/manual-time/${manualId}/review`, {
+          decision: "approved",
+          reason: "Verified with supervisor",
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await scheduleRequest(`/manual-time/${manualId}/review`, {
+          decision: "approved",
+          reason: "Repeated approval",
+        })
+      ).status,
+    ).toBe(409);
+    const manualSummary = (await (
+      await workerRequest(
+        `/members/${scopedMember}/workday-summary?date=2026-10-12`,
+      )
+    ).json()) as any;
+    expect(manualSummary.total.netMs).toBe(450 * 60000);
+    expect(manualSummary.shift).toMatchObject({
+      start: "08:00",
+      end: "16:00",
+      name: "Regular",
+    });
+    const beforeWeekQueries = executedQueries;
+    const weeklySummary = (await (
+      await workerRequest(
+        `/members/${scopedMember}/workweek-summary?date=2026-10-12`,
+      )
+    ).json()) as any;
+    expect(executedQueries - beforeWeekQueries).toBeLessThan(45);
+    expect(weeklySummary).toMatchObject({
+      actualMs: 450 * 60000,
+      complete: true,
+    });
+    const submitSheet = await workerRequest("/timesheets", {
+      date: "2026-10-12",
+    });
+    expect(submitSheet.status).toBe(201);
+    const sheetId = ((await submitSheet.json()) as any).id;
+    expect(
+      (await workerRequest("/timesheets", { date: "2026-10-12" })).status,
+    ).toBe(409);
+    expect(
+      (
+        await workerRequest(`/timesheets/${sheetId}/review`, {
+          decision: "approved",
+          reason: "Self approval forbidden",
+        })
+      ).status,
+    ).toBe(403);
+    // Revision guard also rejects changes that do not alter the rendered snapshot.
+    sqlite
+      .prepare(
+        "UPDATE memberships SET time_revision=time_revision+1 WHERE id=?",
+      )
+      .run(scopedMember);
+    expect(
+      (
+        await scheduleRequest(`/timesheets/${sheetId}/review`, {
+          decision: "approved",
+          reason: "Stale source revision",
+        })
+      ).status,
+    ).toBe(409);
+    const moreTime = await workerRequest("/manual-time", {
+      ...manualBody,
+      date: "2026-10-13",
+    });
+    expect(moreTime.status).toBe(201);
+    const moreId = ((await moreTime.json()) as any).id;
+    expect(
+      (
+        await scheduleRequest(`/timesheets/${sheetId}/review`, {
+          decision: "approved",
+          reason: "Should reject stale totals",
+        })
+      ).status,
+    ).toBe(409);
+    expect(
+      (
+        await scheduleRequest(`/manual-time/${moreId}/review`, {
+          decision: "approved",
+          reason: "Confirmed second work day",
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await scheduleRequest(`/timesheets/${sheetId}/review`, {
+          decision: "approved",
+          reason: "Snapshot has changed",
+        })
+      ).status,
+    ).toBe(409);
+    expect(
+      (
+        await scheduleRequest(`/timesheets/${sheetId}/review`, {
+          decision: "rejected",
+          reason: "Please resubmit updated hours",
+        })
+      ).status,
+    ).toBe(200);
+    const newSheet = await workerRequest("/timesheets", { date: "2026-10-12" });
+    expect(newSheet.status).toBe(201);
+    const newSheetId = ((await newSheet.json()) as any).id;
+    expect(
+      (
+        await scheduleRequest(`/timesheets/${newSheetId}/review`, {
+          decision: "approved",
+          reason: "Final checked weekly hours",
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      sqlite
+        .prepare("SELECT snapshot FROM timesheets WHERE id=?")
+        .get(newSheetId)?.snapshot,
+    ).toContain('"actualMs":54000000');
+    expect(() =>
+      sqlite
+        .prepare("UPDATE timesheets SET snapshot='{}' WHERE id=?")
+        .run(newSheetId),
+    ).toThrow();
+
+    const targetPlan = {
+      schedule: {
+        mode: "target",
+        period: "weekly",
+        minutes: 600,
+        days: [0, 1, 2, 3, 4],
+      },
+      breakPolicy: { thresholdMinutes: 360, deductionMinutes: 30 },
+      cutoff: "04:00",
+    };
+    sqlite
+      .prepare(
+        "INSERT INTO work_plan_versions(id,company_id,membership_id,version,effective_from,timezone,plan,actor,reason,created_at) VALUES(?,?,?,3,'2026-10-19','UTC',?,?,'Target fixture',1)",
+      )
+      .run(
+        crypto.randomUUID(),
+        me.member.company_id,
+        scopedMember,
+        JSON.stringify(targetPlan),
+        me.member.id,
+      );
+    sqlite
+      .prepare(
+        "INSERT INTO attendance_logs(id,company_id,membership_id,branch_id,in_at,out_at,in_lat,in_lng,device_hash,work_date) VALUES(?,?,?,?,?,?,0,0,'target-fixture','2026-10-19')",
+      )
+      .run(
+        crypto.randomUUID(),
+        me.member.company_id,
+        scopedMember,
+        fixtureBranch.id,
+        Date.parse("2026-10-19T08:00:00Z"),
+        Date.parse("2026-10-19T18:00:00Z"),
+      );
+    const targetWeek = (await (
+      await workerRequest(
+        `/members/${scopedMember}/workweek-summary?date=2026-10-19`,
+      )
+    ).json()) as any;
+    expect(targetWeek).toMatchObject({
+      actualMs: 570 * 60000,
+      requiredMs: 600 * 60000,
+      missingMs: 30 * 60000,
+      overtimeMs: 0,
+      complete: true,
+    });
+    expect(targetWeek.days[0].overtimeMs).toBeNull();
+    expect(targetWeek.days[0].lateMs).toBe(0);
+    const targetReminder = (await (
+      await workerRequest("/attendance/shift-reminder")
+    ).json()) as any;
+    expect(targetReminder.reminder).toBeNull();
+    const reminderMember = crypto.randomUUID(),
+      reminderUser = crypto.randomUUID();
+    sqlite
+      .prepare("INSERT INTO users(id,phone,name,password_hash) VALUES(?,?,?,?)")
+      .run(reminderUser, "+998" + Date.now(), "Reminder test", "unused");
+    sqlite
+      .prepare(
+        "INSERT INTO memberships(id,company_id,user_id,role) VALUES(?,?,?,'worker')",
+      )
+      .run(reminderMember, me.member.company_id, reminderUser);
+    sqlite
+      .prepare(
+        "INSERT INTO work_plan_versions(id,company_id,membership_id,version,effective_from,timezone,plan,actor,reason,created_at) VALUES(?,?,?,1,'2026-10-01','UTC',?,?,'Reminder fixture',1)",
+      )
+      .run(
+        crypto.randomUUID(),
+        me.member.company_id,
+        reminderMember,
+        JSON.stringify(pastPlan),
+        me.member.id,
+      );
+    const reminderSession = crypto.randomUUID();
+    sqlite
+      .prepare(
+        "INSERT INTO attendance_logs(id,company_id,membership_id,branch_id,in_at,out_at,in_lat,in_lng,device_hash,work_date) VALUES(?,?,?,?,?,NULL,0,0,'reminder-fixture','2026-10-19')",
+      )
+      .run(
+        reminderSession,
+        me.member.company_id,
+        reminderMember,
+        fixtureBranch.id,
+        Date.parse("2026-10-19T08:00:00Z"),
+      );
+    await queueShiftReminders(env, Date.parse("2026-10-19T15:59:00Z"));
+    expect(
+      sqlite
+        .prepare("SELECT id FROM notifications WHERE id=?")
+        .get("shift-end:" + reminderSession),
+    ).toBeUndefined();
+    kv.delete("cron:shift-reminder-cursor");
+    await queueShiftReminders(env, Date.parse("2026-10-19T16:00:00Z"));
+    kv.delete("cron:shift-reminder-cursor");
+    await queueShiftReminders(env, Date.parse("2026-10-19T16:01:00Z"));
+    expect(
+      sqlite
+        .prepare("SELECT COUNT(*) AS n FROM notifications WHERE id=?")
+        .get("shift-end:" + reminderSession)?.n,
+    ).toBe(1);
+    expect(
+      sqlite
+        .prepare("SELECT recipient FROM notification_outbox WHERE id=?")
+        .get("shift-end:" + reminderSession)?.recipient,
+    ).toBe(reminderMember);
+    sqlite
+      .prepare("UPDATE attendance_logs SET out_at=? WHERE id=?")
+      .run(Date.parse("2026-10-19T16:30:00Z"), reminderSession);
     sqlite
       .prepare("UPDATE memberships SET role='gm' WHERE id=?")
       .run(me.member.id);

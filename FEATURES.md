@@ -30,6 +30,9 @@ Each layer can be toggled per company.
 - [ ] 5. **Unusual-attendance alerts (تنبيهات حضور غير طبيعي):** the manager is alerted on suspicious patterns. Eight rules and default thresholds are approved and listed below; implementation belongs to phase 6. Each rule must be individually configurable and toggleable; no automatic action against a worker.
 
 ### 5.3 Schedules, shifts and time (الدوام والورديات وتسجيل الوقت)
+
+Implementation and remaining acceptance checks: [Phase 2 status](docs/PHASE-2-STATUS.md). Checkboxes below are end-to-end acceptance, not just code availability.
+
 - [ ] **Two work modes:** fixed schedule (جدول بأوقات ثابتة), or hours target (دوام بعدد ساعات).
 - [ ] **Per-worker plan:** the manager sets a plan for each worker, not only per branch, including the worker's own day off on top of company weekends and official holidays.
 - [ ] **Shift templates (الورديات):** managers save standard shifts with start/end times (e.g. صباحي 08:00–16:00، بعد الظهر 12:00–20:00، مسائي 16:00–00:00، ليلي 00:00–08:00), and can add, edit or delete them.

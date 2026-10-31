@@ -8,7 +8,6 @@ const result = await generateSW({
     "*.png",
     "manifest.webmanifest",
   ],
-  globIgnores: ["assets/Map-*", "assets/browser-*"],
   swDest: "dist/sw.js",
   navigateFallback: "index.html",
   navigateFallbackDenylist: [/^\/api\//],

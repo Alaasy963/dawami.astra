@@ -1,3 +1,4 @@
+import MapBoundary from "./MapBoundary";
 import { lazy, Suspense, useRef, useState } from "react";
 import { searchPlaces } from "./places";
 import { t } from "./i18n";
@@ -132,15 +133,17 @@ export default function LocationPicker({
         </button>
       ))}
       <p>{t("اضغط على الخريطة لتحديد مكان الفرع أو تعديل النقطة.")}</p>
-      <Suspense fallback={<p>{t("عم نحمّل الخريطة…")}</p>}>
-        <Map
-          lat={center.lat}
-          lng={center.lng}
-          radius={radius}
-          selected={!!value || !!candidate}
-          onSelect={select}
-        />
-      </Suspense>
+      <MapBoundary>
+        <Suspense fallback={<p>{t("عم نحمّل الخريطة…")}</p>}>
+          <Map
+            lat={center.lat}
+            lng={center.lng}
+            radius={radius}
+            selected={!!value || !!candidate}
+            onSelect={select}
+          />
+        </Suspense>
+      </MapBoundary>
       {candidate && (
         <div role="group" aria-label={t("تأكيد موقع الفرع")}>
           <p>{t("هل النقطة الظاهرة هي مكان الفرع الصحيح؟")}</p>

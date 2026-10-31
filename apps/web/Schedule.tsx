@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { api } from "./lib";
-import { t } from "./i18n";
+import { t, locale } from "./i18n";
 import { companyDate } from "../../packages/domain/company-date";
 const weekdays = [
   "الاثنين",
@@ -136,6 +136,7 @@ export default function Schedule({ me }: { me: any }) {
             {editable && (
               <PlanEditor
                 key={`${member}:${date}:${revision}`}
+                weekends={JSON.parse(me.company.weekend_days ?? "[4]")}
                 member={member}
                 date={date}
                 today={companyDate(me.company.timezone)}
@@ -147,6 +148,26 @@ export default function Schedule({ me }: { me: any }) {
           </>
         )}
       </section>
+      {member === me.member.id && me.member.role === "gm" && (
+        <p>{t("المدير العام لا يقدم طلبات وقت أو كشوف ساعات لنفسه")}</p>
+      )}
+      <TimeRequests
+        key={`${member}:${date}:${revision}`}
+        member={member}
+        self={member === me.member.id && me.member.role !== "gm"}
+        date={date}
+        revision={revision}
+        busy={busy}
+        save={save}
+      />
+      <WeekSummary
+        key={member}
+        member={member}
+        date={date}
+        revision={revision}
+        selectDate={setDate}
+        busy={busy}
+      />
       {manager && (
         <Templates revision={revision} busy={busy} save={save} me={me} />
       )}
@@ -205,6 +226,7 @@ function PlanSummary({ record }: { record: any }) {
 }
 function PlanEditor({
   member,
+  weekends,
   date,
   today,
   data,
@@ -212,6 +234,7 @@ function PlanEditor({
   save,
 }: {
   member: string;
+  weekends: number[];
   date: string;
   today: string;
   data: any;
@@ -265,6 +288,8 @@ function PlanEditor({
                   deductionMinutes: Number(f.get("deduction")),
                 },
                 cutoff: f.get("cutoff"),
+                graceMinutes: Number(f.get("grace")),
+                reminderGraceMinutes: Number(f.get("reminderGrace")),
               },
             }),
           );
@@ -326,7 +351,7 @@ function PlanEditor({
                   ? old.schedule.days.includes(i)
                   : old?.schedule.mode === "fixed"
                     ? !!old.schedule.days[i]
-                    : i !== 4
+                    : !weekends.includes(i)
               }
               templates={templates?.data?.items ?? []}
             />
@@ -349,6 +374,26 @@ function PlanEditor({
               max="1440"
               required
               defaultValue={old?.breakPolicy.thresholdMinutes ?? 360}
+            />
+          </Field>
+          <Field name={t("مهلة تذكير مغادرة الفرع بالدقائق")}>
+            <input
+              name="reminderGrace"
+              type="number"
+              min="0"
+              max="120"
+              required
+              defaultValue={old?.reminderGraceMinutes ?? 5}
+            />
+          </Field>
+          <Field name={t("هامش التأخير بالدقائق")}>
+            <input
+              name="grace"
+              type="number"
+              min="0"
+              max="240"
+              required
+              defaultValue={old?.graceMinutes ?? 10}
             />
           </Field>
           <Field name={t("حد اليوم الليلي")}>
@@ -604,11 +649,7 @@ function WorkdaySummary({
     );
   const data = result.data;
   if (data.status !== "ok")
-    return (
-      <p>
-        {t("ملخص الساعات متاح حالياً للأيام ذات الشفت المحدد والواضح فقط.")}
-      </p>
-    );
+    return <p>{t("لا يمكن حساب ملخص لهذا اليوم بدون خطة واضحة.")}</p>;
   const duration = (ms: number) =>
     `${Math.floor(ms / 3600000)}:${String(Math.floor(ms / 60000) % 60).padStart(2, "0")}`;
   return (
@@ -634,6 +675,19 @@ function WorkdaySummary({
           {t(
             "الحساب غير مكتمل: اليوم لم ينتهِ أو توجد جلسات مفتوحة أو أحداث تحتاج مراجعة.",
           )}
+        </p>
+      )}
+      {data.requiredMs !== null && data.requiredMs !== undefined && (
+        <p>
+          {t("المطلوب")}: <bdi>{duration(data.requiredMs)}</bdi> ·{" "}
+          {t("الساعات الناقصة")}: <bdi>{duration(data.missingMs)}</bdi> ·{" "}
+          {t("الساعات الإضافية")}: <bdi>{duration(data.overtimeMs)}</bdi>
+        </p>
+      )}
+      {data.mode === "fixed" && (
+        <p>
+          {t("التأخير بعد هامش السماح بالدقائق")}:{" "}
+          {Math.floor((data.lateMs ?? 0) / 60000)}
         </p>
       )}
       {data.openCount > 0 && (
@@ -714,6 +768,330 @@ function WorkdaySummary({
           ))}
         </ul>
       )}
+    </section>
+  );
+}
+
+function WeekSummary({
+  member,
+  date,
+  revision,
+  selectDate,
+  busy,
+}: {
+  member: string;
+  date: string;
+  revision: number;
+  selectDate: (date: string) => void;
+  busy: boolean;
+}) {
+  const current = useLoad(
+    `/members/${member}/workweek-summary?date=${date}`,
+    revision,
+  );
+  const previousDate = new Date(date + "T12:00:00Z");
+  previousDate.setUTCDate(previousDate.getUTCDate() - 7);
+  const previous = useLoad(
+    `/members/${member}/workweek-summary?date=${previousDate.toISOString().slice(0, 10)}`,
+    revision,
+  );
+  const hours = (ms: number | null) =>
+    ms === null
+      ? "—"
+      : `${Math.floor(ms / 3600000)}:${String(Math.floor(ms / 60000) % 60).padStart(2, "0")}`;
+  return (
+    <section className="card padded">
+      <h2>{t("تقويم ساعات الأسبوع")}</h2>
+      {!current && <p role="status">{t("عم نحسب ساعات الأسبوع…")}</p>}
+      {current?.error && (
+        <p className="error" role="alert">
+          {current.error}
+        </p>
+      )}
+      {current?.data && (
+        <>
+          <p>
+            <bdi>
+              {current.data.start} — {current.data.end}
+            </bdi>
+          </p>
+          <p>
+            {t("الصافي هذا الأسبوع")}: <bdi>{hours(current.data.actualMs)}</bdi>
+            {previous?.data && (
+              <>
+                {" "}
+                · {t("الأسبوع السابق")}:{" "}
+                <bdi>{hours(previous.data.actualMs)}</bdi>
+              </>
+            )}
+          </p>
+          <p>
+            {t("المطلوب")}: <bdi>{hours(current.data.requiredMs)}</bdi> ·{" "}
+            {t("الساعات الناقصة")}: <bdi>{hours(current.data.missingMs)}</bdi> ·{" "}
+            {t("الساعات الإضافية")}: <bdi>{hours(current.data.overtimeMs)}</bdi>
+          </p>
+          <p>
+            {t(
+              "الأرقام أولية؛ النقص ليس خصماً تلقائياً والإضافي ليس راتباً معتمداً.",
+            )}
+          </p>
+          {current.data.policyChanged && (
+            <p className="error">
+              {t(
+                "تغيّر الهدف خلال الأسبوع؛ المقارنة تحتاج مراجعة دون تقسيم تلقائي للهدف.",
+              )}
+            </p>
+          )}
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>{t("التاريخ")}</th>
+                  <th>{t("الشفت المخطط")}</th>
+                  <th>{t("الصافي")}</th>
+                  <th>{t("الحالة")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {current.data.days.map((d: any) => (
+                  <tr key={d.date}>
+                    <td>
+                      <button
+                        className="ghost"
+                        disabled={busy}
+                        onClick={() => selectDate(d.date)}
+                      >
+                        <bdi>{d.date}</bdi>
+                      </button>
+                    </td>
+                    <td>
+                      {d.shift ? (
+                        <>
+                          <span>{d.shift.name}</span>
+                          <br />
+                          <bdi>
+                            {d.shift.start} — {d.shift.end}
+                          </bdi>
+                        </>
+                      ) : d.mode === "target" ? (
+                        t("هدف ساعات")
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                    <td>
+                      <bdi>{d.total ? hours(d.total.netMs) : "—"}</bdi>
+                    </td>
+                    <td>
+                      {d.status === "off"
+                        ? t("عطلة")
+                        : d.status === "no_plan"
+                          ? t("لا توجد خطة")
+                          : d.status !== "ok"
+                            ? t("تحتاج مراجعة")
+                            : d.complete
+                              ? t("مكتمل مبدئياً")
+                              : t("غير مكتمل")}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+      {previous?.error && <p className="error">{previous.error}</p>}
+    </section>
+  );
+}
+
+function TimeRequests({
+  member,
+  self,
+  date,
+  revision,
+  busy,
+  save,
+}: {
+  member: string;
+  self: boolean;
+  date: string;
+  revision: number;
+  busy: boolean;
+  save: (fn: () => Promise<any>) => Promise<void>;
+}) {
+  const manual = useLoad(`/members/${member}/manual-time`, revision),
+    sheets = useLoad(`/members/${member}/timesheets`, revision);
+  const [autofill, setAutofill] = useState(false);
+  const status = (value: string) =>
+    t(
+      value === "pending"
+        ? "بانتظار القرار"
+        : value === "approved"
+          ? "معتمد"
+          : "مرفوض",
+    );
+  const reviewForm = (path: string) => (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        const f = new FormData(e.currentTarget);
+        const decision = (e.nativeEvent as SubmitEvent).submitter?.getAttribute(
+          "value",
+        );
+        void save(() => api(path, { decision, reason: f.get("reason") }));
+      }}
+    >
+      <Field name={t("سبب القرار")}>
+        <input
+          name="reason"
+          required
+          minLength={5}
+          maxLength={500}
+          disabled={busy}
+        />
+      </Field>
+      <button value="approved" disabled={busy}>
+        {t("اعتماد")}
+      </button>{" "}
+      <button value="rejected" className="ghost" disabled={busy}>
+        {t("رفض")}
+      </button>
+    </form>
+  );
+  return (
+    <section className="card padded">
+      <h2>{t("طلبات الوقت وكشوف الساعات")}</h2>
+      {self && (
+        <details>
+          <summary>{t("نسيت تسجيل الحضور؟")}</summary>
+          <p>{t("الأوقات حسب منطقة الشركة، ولا تُحتسب قبل موافقة المدير.")}</p>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              const f = new FormData(e.currentTarget);
+              void save(() =>
+                api("/manual-time", {
+                  date,
+                  autofill,
+                  ...(!autofill
+                    ? { startLocal: f.get("start"), endLocal: f.get("end") }
+                    : {}),
+                  reason: f.get("reason"),
+                }),
+              );
+            }}
+          >
+            <fieldset
+              disabled={busy}
+              style={{ border: 0, padding: 0, minWidth: 0 }}
+            >
+              <label>
+                <input
+                  style={{ width: "auto" }}
+                  type="checkbox"
+                  checked={autofill}
+                  onChange={(e) => setAutofill(e.target.checked)}
+                />
+                {t("تعبئة تلقائية حسب الجدول")}
+              </label>
+              {!autofill && (
+                <>
+                  <Field name={t("وقت الدخول المطلوب")}>
+                    <input
+                      name="start"
+                      type="datetime-local"
+                      defaultValue={`${date}T08:00`}
+                      required
+                    />
+                  </Field>
+                  <Field name={t("وقت الخروج المطلوب")}>
+                    <input
+                      name="end"
+                      type="datetime-local"
+                      defaultValue={`${date}T16:00`}
+                      required
+                    />
+                  </Field>
+                </>
+              )}
+              <Field name={t("سبب الطلب")}>
+                <input name="reason" required minLength={5} maxLength={500} />
+              </Field>
+              <button>{t("إرسال طلب الوقت")}</button>
+            </fieldset>
+          </form>
+        </details>
+      )}
+      <h3>{t("طلبات الوقت اليدوي")}</h3>
+      {!manual && <p role="status">{t("عم نحمّل الطلبات…")}</p>}
+      {manual?.error && (
+        <p role="alert" className="error">
+          {manual.error}
+        </p>
+      )}
+      {manual?.data?.items.length === 0 && <p>{t("لا توجد طلبات")}</p>}
+      {manual?.data?.items.map((r: any) => (
+        <details key={r.id}>
+          <summary>
+            <bdi>{r.work_date}</bdi> · {status(r.status)}
+          </summary>
+          <p>{r.reason}</p>
+          <p>
+            <bdi>
+              {new Intl.DateTimeFormat(locale, {
+                timeZone: r.timezone,
+                dateStyle: "short",
+                timeStyle: "short",
+              }).format(r.in_at)}{" "}
+              —{" "}
+              {new Intl.DateTimeFormat(locale, {
+                timeZone: r.timezone,
+                dateStyle: "short",
+                timeStyle: "short",
+              }).format(r.out_at)}
+            </bdi>{" "}
+            {r.timezone}
+          </p>
+          {r.review_reason && <p>{r.review_reason}</p>}
+          {manual.data.canReview &&
+            r.status === "pending" &&
+            reviewForm(`/manual-time/${r.id}/review`)}
+        </details>
+      ))}
+      <h3>{t("كشوف الساعات الأسبوعية")}</h3>
+      <p>{t("الكشف المعتمد يحفظ نسخة ثابتة من الساعات؛ ليس إيصال راتب.")}</p>
+      {self && (
+        <button
+          disabled={busy}
+          onClick={() => void save(() => api("/timesheets", { date }))}
+        >
+          {t("إرسال أسبوع التاريخ المختار للاعتماد")}
+        </button>
+      )}
+      {!sheets && <p role="status">{t("عم نحمّل الطلبات…")}</p>}
+      {sheets?.error && (
+        <p role="alert" className="error">
+          {sheets.error}
+        </p>
+      )}
+      {sheets?.data?.items.map((r: any) => {
+        const snapshot = JSON.parse(r.snapshot);
+        return (
+          <details key={r.id}>
+            <summary>
+              <bdi>{r.week_start}</bdi> · {status(r.status)}
+            </summary>
+            <p>
+              {t("صافي الساعات")}: {(snapshot.actualMs / 3600000).toFixed(2)}
+            </p>
+            {r.reason && <p>{r.reason}</p>}
+            {sheets.data.canReview &&
+              r.status === "pending" &&
+              reviewForm(`/timesheets/${r.id}/review`)}
+          </details>
+        );
+      })}
     </section>
   );
 }

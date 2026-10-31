@@ -14,6 +14,8 @@ describe("interface language", () => {
     for (const file of [
       "apps/web/main.tsx",
       "apps/web/Schedule.tsx",
+      "apps/web/ShiftReminder.tsx",
+      "apps/web/MapBoundary.tsx",
       "apps/web/lib.ts",
       "apps/web/LocationPicker.tsx",
       "apps/web/geolocation.ts",

@@ -46,8 +46,10 @@ import {
   type Operation,
 } from "./lib";
 import "./style.css";
+import MapBoundary from "./MapBoundary";
 import AppUpdate from "./AppUpdate";
 import Schedule from "./Schedule";
+import ShiftReminder from "./ShiftReminder";
 import { viewContext } from "./view-context";
 import { notificationLocation } from "./notification-location";
 import PushControls from "./PushControls";
@@ -73,7 +75,11 @@ function OptionalMap(props: { lat: number; lng: number; radius?: number }) {
         {t("تحميل الخريطة عند الطلب")}
       </button>
     );
-  return <MapView {...props} />;
+  return (
+    <MapBoundary>
+      <MapView {...props} />
+    </MapBoundary>
+  );
 }
 const roles: Record<string, string> = {
   gm: t("مدير عام"),
@@ -801,6 +807,9 @@ function App() {
                 {t("فقط.")}
               </div>
             )}
+            {!me.owner && online && (
+              <ShiftReminder key={me.member.id} revision={revision} />
+            )}
             {actualView === "dashboard" && (
               <Dashboard me={me} revision={revision} setView={setView} />
             )}
@@ -1092,7 +1101,11 @@ function Attendance({
       <div className="two-col">
         <section className="card padded">
           <h2>{t("حضوري اليوم")}</h2>
-          <p>{t("الموقع يُستخدم فقط وقت التسجيل.")}</p>
+          <p>
+            {t(
+              "الموقع يُستخدم للتسجيل، ولتذكير المغادرة إذا فعّلته والصفحة ظاهرة.",
+            )}
+          </p>
           <div className="timer" dir="ltr">
             {open
               ? elapsedTime(open.in_at, now)
@@ -1858,6 +1871,8 @@ function CompanySettings({
                 timezone: f.get("timezone"),
                 sessionDays: Number(f.get("sessionDays")),
                 gpsAccuracy: Number(f.get("gpsAccuracy")),
+                overtimePercent: Number(f.get("overtimePercent")),
+                weekendDays: f.getAll("weekend").map(Number),
               },
               "PUT",
             ),
@@ -1896,6 +1911,45 @@ function CompanySettings({
             defaultValue={me.company.gps_accuracy}
           />
         </Field>
+        <Field label={t("زيادة أجر الساعة الإضافية بالمئة")}>
+          <input
+            name="overtimePercent"
+            type="number"
+            min="0"
+            max="1000"
+            step="0.01"
+            defaultValue={me.company.overtime_percent ?? 0}
+            required
+          />
+        </Field>
+        <p>
+          {t("النسبة تُحفظ بكشف الساعات؛ تطبيقها المالي ضمن مرحلة الرواتب.")}
+        </p>
+        <fieldset>
+          <legend>{t("العطلة الأسبوعية الافتراضية للخطط الجديدة")}</legend>
+          {[
+            "الاثنين",
+            "الثلاثاء",
+            "الأربعاء",
+            "الخميس",
+            "الجمعة",
+            "السبت",
+            "الأحد",
+          ].map((day, i) => (
+            <label key={i}>
+              <input
+                style={{ width: "auto" }}
+                name="weekend"
+                type="checkbox"
+                value={i}
+                defaultChecked={JSON.parse(
+                  me.company.weekend_days ?? "[4]",
+                ).includes(i)}
+              />
+              {t(day)}
+            </label>
+          ))}
+        </fieldset>
         <button disabled={busy}>{t("حفظ الإعدادات")}</button>
       </form>
       <small>{t("رمز الشركة للدخول المؤقت:")}</small>

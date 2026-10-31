@@ -1,5 +1,16 @@
+import { queueShiftReminders } from "./shift-reminders";
+import {
+  targetDayBounds,
+  targetDayTotal,
+  latenessMs,
+} from "../../packages/domain/target-day";
+import { workdayTime } from "../../packages/domain/work-time";
 import { groupWorkdaySessions } from "../../packages/domain/workday-sessions";
-import { dateOffset, shiftWindow } from "../../packages/domain/shift-window";
+import {
+  dateOffset,
+  shiftWindow,
+  wallTime,
+} from "../../packages/domain/shift-window";
 import { shiftSchema, shiftSpan } from "../../packages/domain/work-time";
 import {
   workPlanSchema,
@@ -140,7 +151,7 @@ app.onError((e, c) => {
       400,
     );
   if (
-    /early_time_reviews.company_id|early_review_invalid|shift_versions.company_id|work_plan_versions.company_id|push_identity_conflict|rebind_already_decided|attendance_already_closed|attendance_overlap|memberships.company_id, memberships.device_hash/.test(
+    /manual_time_conflict|timesheet_conflict|timesheets.company_id|early_time_reviews.company_id|early_review_invalid|shift_versions.company_id|work_plan_versions.company_id|push_identity_conflict|rebind_already_decided|attendance_already_closed|attendance_overlap|memberships.company_id, memberships.device_hash/.test(
       e.message,
     )
   )
@@ -952,33 +963,137 @@ app.get("/api/members/:id/work-plan", async (c) => {
     shiftWindow: shift ? shiftWindow(date, shift, plan!.timezone) : null,
   });
 });
-async function workdaySummary(c: any, target: Member, date: string) {
+async function workdaySummary(
+  c: any,
+  target: Member,
+  date: string,
+  cache = new Map<string, any>(),
+) {
   const load = async (day: string) => {
-    const row = await stmt(
-      c.env,
-      "SELECT * FROM work_plan_versions WHERE company_id=? AND membership_id=? AND effective_from<=? ORDER BY effective_from DESC,version DESC LIMIT 1",
-      target.company_id,
-      target.id,
-      day,
-    ).first<any>();
+    const row = cache.has(day)
+      ? cache.get(day)
+      : await stmt(
+          c.env,
+          "SELECT * FROM work_plan_versions WHERE company_id=? AND membership_id=? AND effective_from<=? ORDER BY effective_from DESC,version DESC LIMIT 1",
+          target.company_id,
+          target.id,
+          day,
+        ).first<any>();
+    cache.set(day, row);
     if (!row) return null;
     const plan = workPlanSchema.parse(JSON.parse(row.plan));
     const weekday = (new Date(day + "T12:00:00Z").getUTCDay() + 6) % 7;
-    if (plan.schedule.mode !== "fixed") return { kind: "target" as const };
+    if (plan.schedule.mode !== "fixed")
+      return {
+        kind: "target" as const,
+        plan,
+        planId: row.id,
+        timezone: row.timezone,
+      };
     const shift = plan.schedule.days[weekday];
     return shift
       ? {
           planId: row.id,
           kind: "shift" as const,
+          shift,
           window: shiftWindow(day, shift, row.timezone),
           breakPolicy: plan.breakPolicy,
+          graceMinutes: plan.graceMinutes,
         }
-      : { kind: "off" as const };
+      : {
+          kind: "off" as const,
+          timezone: row.timezone,
+          cutoff: plan.cutoff,
+          planId: row.id,
+        };
   };
   const current = await load(date);
+  if (current?.kind === "target") {
+    const bounds = targetDayBounds(date, current.timezone, current.plan.cutoff);
+    if (!bounds) return { status: "unresolved_shift", provisional: true };
+    const rows = (
+      await stmt(
+        c.env,
+        "SELECT id,in_at,out_at,0 AS manual FROM attendance_logs WHERE company_id=?1 AND membership_id=?2 AND in_at>=?3 AND in_at<?4 UNION ALL SELECT id,in_at,out_at,1 AS manual FROM manual_time_requests WHERE company_id=?1 AND membership_id=?2 AND status='approved' AND in_at>=?3 AND in_at<?4 ORDER BY in_at LIMIT 501",
+        target.company_id,
+        target.id,
+        bounds.startAt,
+        bounds.endAt,
+      ).all<any>()
+    ).results;
+    if (rows.length > 500)
+      return { status: "too_many_sessions", provisional: true };
+    const invalid = rows.filter(
+      (r) =>
+        r.out_at !== null &&
+        (r.out_at < r.in_at || r.out_at - r.in_at > 86400000),
+    );
+    const closed = rows.filter(
+      (r) => r.out_at !== null && !invalid.includes(r),
+    );
+    const total = targetDayTotal(
+      date,
+      current.plan,
+      closed.map((r) => ({ inAt: r.in_at, outAt: r.out_at })),
+    );
+    const pending = await stmt(
+      c.env,
+      "SELECT (SELECT COUNT(*) FROM sync_operations WHERE company_id=?1 AND membership_id=?2 AND status='review') + (SELECT COUNT(*) FROM manual_time_requests WHERE company_id=?1 AND membership_id=?2 AND status='pending') AS count",
+      target.company_id,
+      target.id,
+    ).first<any>();
+    return {
+      status: "ok",
+      mode: "target",
+      period:
+        current.plan.schedule.mode === "target"
+          ? current.plan.schedule.period
+          : null,
+      targetMinutes:
+        current.plan.schedule.mode === "target"
+          ? current.plan.schedule.minutes
+          : null,
+      planId: current.planId,
+      date,
+      ...bounds,
+      total: { ...total, sessionIds: closed.map((r) => r.id) },
+      requiredMs: total.requiredMs,
+      missingMs: total.missingMs,
+      overtimeMs: total.overtimeMs,
+      lateMs: 0,
+      provisional: true,
+      canReview: false,
+      decisions: [],
+      review: invalid.map((r) => ({ id: r.id, reason: "long_session" })),
+      openCount: rows.length - closed.length - invalid.length,
+      pendingCount: pending.count,
+      complete:
+        !invalid.length &&
+        rows.every((r) => r.out_at !== null) &&
+        !pending.count &&
+        Date.now() >= bounds.endAt,
+    };
+  }
+  if (current?.kind === "off") {
+    const bounds = targetDayBounds(date, current.timezone, current.cutoff);
+    if (!bounds) return { status: "unresolved_shift", provisional: true };
+    const extra = await stmt(
+      c.env,
+      "SELECT (SELECT COUNT(*) FROM attendance_logs WHERE company_id=?1 AND membership_id=?2 AND in_at>=?3 AND in_at<?4)+(SELECT COUNT(*) FROM manual_time_requests WHERE company_id=?1 AND membership_id=?2 AND status<>'rejected' AND in_at>=?3 AND in_at<?4) AS count",
+      target.company_id,
+      target.id,
+      bounds.startAt,
+      bounds.endAt,
+    ).first<any>();
+    return {
+      status: extra.count ? "unscheduled_time" : "off",
+      planId: current.planId,
+      provisional: true,
+    };
+  }
   if (!current || current.kind !== "shift")
     return {
-      status: !current ? "no_plan" : current.kind,
+      status: "no_plan",
       provisional: true,
     };
   if (current.window.status !== "resolved")
@@ -996,7 +1111,7 @@ async function workdaySummary(c: any, target: Member, date: string) {
   const rows = (
     await stmt(
       c.env,
-      "SELECT id,in_at,out_at FROM attendance_logs WHERE company_id=? AND membership_id=? AND in_at<? AND (out_at IS NULL OR out_at>?) ORDER BY in_at LIMIT 501",
+      "SELECT id,in_at,out_at,0 AS manual FROM attendance_logs WHERE company_id=?1 AND membership_id=?2 AND in_at<?3 AND (out_at IS NULL OR out_at>?4) UNION ALL SELECT id,in_at,out_at,1 AS manual FROM manual_time_requests WHERE company_id=?1 AND membership_id=?2 AND status='approved' AND in_at<?3 AND out_at>?4 ORDER BY in_at LIMIT 501",
       target.company_id,
       target.id,
       endAt,
@@ -1018,6 +1133,7 @@ async function workdaySummary(c: any, target: Member, date: string) {
     ).all<any>()
   ).results;
   const decisions: Record<string, "approve" | "reject"> = {};
+  for (const row of rows) if (row.manual) decisions[row.id] = "approve";
   for (const decision of decisionsRows)
     if (
       rows.some(
@@ -1040,12 +1156,41 @@ async function workdaySummary(c: any, target: Member, date: string) {
   const total = result.days.find((d) => d.workDate === date)!;
   const pending = await stmt(
     c.env,
-    "SELECT COUNT(*) AS count FROM sync_operations WHERE company_id=? AND membership_id=? AND status='review'",
+    "SELECT (SELECT COUNT(*) FROM sync_operations WHERE company_id=?1 AND membership_id=?2 AND status='review') + (SELECT COUNT(*) FROM manual_time_requests WHERE company_id=?1 AND membership_id=?2 AND status='pending') AS count",
     target.company_id,
     target.id,
   ).first<any>();
   return {
     status: "ok",
+    mode: "fixed",
+    shift: current.shift,
+    requiredMs: workdayTime(
+      [{ inAt: startAt, outAt: endAt }],
+      current.breakPolicy,
+    ).netMs,
+    missingMs: Math.max(
+      0,
+      workdayTime([{ inAt: startAt, outAt: endAt }], current.breakPolicy)
+        .netMs - total.netMs,
+    ),
+    overtimeMs: Math.max(
+      0,
+      total.netMs -
+        workdayTime([{ inAt: startAt, outAt: endAt }], current.breakPolicy)
+          .netMs,
+    ),
+    lateMs: latenessMs(
+      rows.length ? Math.min(...rows.map((r) => r.in_at)) : null,
+      startAt,
+      current.graceMinutes,
+    ),
+    attendanceState: pending.count
+      ? "pending"
+      : rows.length
+        ? "attended"
+        : Date.now() < endAt
+          ? "not_started"
+          : "absent",
     planId: current.planId,
     canReview:
       c.get("member").id !== target.id &&
@@ -1076,6 +1221,355 @@ app.get("/api/members/:id/workday-summary", async (c) => {
     c.req.query("date") ?? companyDate(c.get("company").timezone),
   );
   return c.json(await workdaySummary(c, target, date));
+});
+async function workweekSummary(c: any, target: Member, date: string) {
+  const offset = (new Date(date + "T12:00:00Z").getUTCDay() + 6) % 7;
+  const start = dateOffset(date, -offset);
+  const days = [];
+  const planCache = new Map<string, any>();
+  for (let i = 0; i < 7; i++)
+    days.push({
+      date: dateOffset(start, i),
+      ...(await workdaySummary(c, target, dateOffset(start, i), planCache)),
+    });
+  const active = days.filter((d: any) => d.status === "ok") as any[];
+  const weekly = active.filter((d) => d.period === "weekly");
+  const consistent =
+    weekly.length === 0 ||
+    (weekly.length === 7 && new Set(weekly.map((d) => d.planId)).size === 1);
+  const actualMs = active.reduce((v, d) => v + d.total.netMs, 0);
+  const coverage = days.every(
+    (d: any) => d.status === "ok" || d.status === "off",
+  );
+  const requiredMs =
+    consistent && coverage
+      ? weekly.length
+        ? weekly[0].targetMinutes * 60000
+        : active.reduce((v, d) => v + (d.requiredMs ?? 0), 0)
+      : null;
+  return {
+    overtimePercent: c.get("company").overtime_percent,
+    start,
+    end: dateOffset(start, 6),
+    days,
+    actualMs: coverage || active.length ? actualMs : null,
+    requiredMs,
+    missingMs:
+      requiredMs === null
+        ? null
+        : weekly.length
+          ? Math.max(0, requiredMs - actualMs)
+          : active.reduce((v, d) => v + (d.missingMs ?? 0), 0),
+    overtimeMs:
+      requiredMs === null
+        ? null
+        : weekly.length
+          ? Math.max(0, actualMs - requiredMs)
+          : active.reduce((v, d) => v + (d.overtimeMs ?? 0), 0),
+    complete:
+      dateOffset(start, 6) < companyDate(c.get("company").timezone) &&
+      consistent &&
+      days.every(
+        (d: any) => d.status === "off" || (d.status === "ok" && d.complete),
+      ),
+    provisional: true,
+    policyChanged: !consistent,
+  };
+}
+app.get("/api/members/:id/workweek-summary", async (c) => {
+  const target = await allowedTarget(c, uuid.parse(c.req.param("id")));
+  return c.json(
+    await workweekSummary(
+      c,
+      target,
+      workDateSchema.parse(
+        c.req.query("date") ?? companyDate(c.get("company").timezone),
+      ),
+    ),
+  );
+});
+
+app.get("/api/members/:id/manual-time", async (c) => {
+  const target = await allowedTarget(c, uuid.parse(c.req.param("id")));
+  return c.json({
+    items: (
+      await stmt(
+        c.env,
+        "SELECT r.*,p.timezone FROM manual_time_requests r JOIN work_plan_versions p ON p.id=r.plan_id AND p.company_id=r.company_id WHERE r.company_id=? AND r.membership_id=? ORDER BY r.created_at DESC LIMIT 100",
+        target.company_id,
+        target.id,
+      ).all()
+    ).results,
+    canReview:
+      target.id !== c.get("member").id &&
+      canReset(c.get("member").role, target.role),
+  });
+});
+app.post("/api/manual-time", async (c) => {
+  const m = c.get("member");
+  if (m.role === "gm")
+    fail(403, "المدير العام لا يقدم طلبات وقت أو كشوف ساعات لنفسه");
+  const b = z
+    .object({
+      date: workDateSchema,
+      autofill: z.boolean(),
+      startLocal: z.string().optional(),
+      endLocal: z.string().optional(),
+      reason: z.string().trim().min(5).max(500),
+    })
+    .strict()
+    .parse(await c.req.json());
+  const row = await stmt(
+    c.env,
+    "SELECT * FROM work_plan_versions WHERE company_id=? AND membership_id=? AND effective_from<=? ORDER BY effective_from DESC,version DESC LIMIT 1",
+    m.company_id,
+    m.id,
+    b.date,
+  ).first<any>();
+  if (!row) fail(400, "حدد خطة الدوام أولاً");
+  const plan = workPlanSchema.parse(JSON.parse(row.plan));
+  let inAt: number, outAt: number;
+  if (b.autofill) {
+    const weekday = (new Date(b.date + "T12:00:00Z").getUTCDay() + 6) % 7;
+    const shift =
+      plan.schedule.mode === "fixed" ? plan.schedule.days[weekday] : null;
+    if (!shift) fail(400, "التعبئة التلقائية تحتاج شفت محدد");
+    const window = shiftWindow(b.date, shift, row.timezone);
+    if (window.status !== "resolved")
+      fail(400, "وقت الشفت يحتاج مراجعة بسبب تغيير التوقيت");
+    inAt = window.startAt;
+    outAt = window.endAt;
+  } else {
+    const parse = (value: string | undefined) => {
+      if (!value || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(value))
+        fail(400, "حدد التاريخ والوقت");
+      const resolved = wallTime(
+        value.slice(0, 10),
+        value.slice(11),
+        row.timezone,
+      );
+      if (resolved.status !== "resolved") fail(400, "الوقت مكرر أو غير موجود");
+      return resolved.candidates[0];
+    };
+    inAt = parse(b.startLocal);
+    outAt = parse(b.endLocal);
+    if (b.startLocal!.slice(0, 10) !== b.date)
+      fail(400, "تاريخ الدخول يجب أن يطابق اليوم المختار");
+  }
+  if (outAt <= inAt || outAt - inAt > 86400000 || outAt > Date.now())
+    fail(400, "حدد فترة منتهية لا تتجاوز 24 ساعة");
+  const requestId = id();
+  await c.env.DB.batch([
+    stmt(
+      c.env,
+      "INSERT INTO manual_time_requests(id,company_id,membership_id,plan_id,work_date,in_at,out_at,reason,status,created_at) VALUES(?,?,?,?,?,?,?,?,'pending',?)",
+      requestId,
+      m.company_id,
+      m.id,
+      row.id,
+      b.date,
+      inAt,
+      outAt,
+      b.reason,
+      Date.now(),
+    ),
+    audit(
+      c.env,
+      c.get("session"),
+      m.company_id,
+      "manual_time.request",
+      requestId,
+      b.reason,
+      { inAt, outAt, autofill: b.autofill },
+    ),
+  ]);
+  return c.json({ id: requestId }, 201);
+});
+app.post("/api/manual-time/:id/review", async (c) => {
+  roles(c, "gm", "am", "manager");
+  const r = await stmt(
+    c.env,
+    "SELECT * FROM manual_time_requests WHERE id=? AND company_id=?",
+    uuid.parse(c.req.param("id")),
+    c.get("company").id,
+  ).first<any>();
+  if (!r) fail(404, "الطلب غير موجود");
+  const target = await allowedTarget(c, r.membership_id);
+  if (
+    target.id === c.get("member").id ||
+    !canReset(c.get("member").role, target.role)
+  )
+    fail(403, "غير مسموح اعتماد الطلب الشخصي");
+  if (r.status !== "pending") fail(409, "تم حسم الطلب سابقاً");
+  const b = z
+    .object({
+      decision: z.enum(["approved", "rejected"]),
+      reason: z.string().trim().min(5).max(500),
+    })
+    .strict()
+    .parse(await c.req.json());
+  await c.env.DB.batch([
+    stmt(
+      c.env,
+      "UPDATE manual_time_requests SET status=?,reviewer=?,review_reason=?,decided_at=? WHERE id=? AND company_id=?",
+      b.decision,
+      c.get("member").id,
+      b.reason,
+      Date.now(),
+      r.id,
+      target.company_id,
+    ),
+    audit(
+      c.env,
+      c.get("session"),
+      target.company_id,
+      "manual_time." + b.decision,
+      r.id,
+      b.reason,
+      r,
+    ),
+  ]);
+  return c.json({ ok: true });
+});
+function sheetSnapshot(week: any) {
+  return JSON.stringify({
+    overtimePercent: week.overtimePercent,
+    start: week.start,
+    end: week.end,
+    actualMs: week.actualMs,
+    requiredMs: week.requiredMs,
+    missingMs: week.missingMs,
+    overtimeMs: week.overtimeMs,
+    days: week.days.map((d: any) => ({
+      date: d.date,
+      status: d.status,
+      planId: d.planId,
+      total: d.total
+        ? { ...d.total, sessionIds: [...(d.total.sessionIds ?? [])].sort() }
+        : d.total,
+      requiredMs: d.requiredMs,
+      lateMs: d.lateMs,
+      decisions: d.decisions
+        ? [...d.decisions].sort((a: any, b: any) =>
+            a.sessionId.localeCompare(b.sessionId),
+          )
+        : d.decisions,
+    })),
+  });
+}
+app.get("/api/members/:id/timesheets", async (c) => {
+  const target = await allowedTarget(c, uuid.parse(c.req.param("id")));
+  return c.json({
+    items: (
+      await stmt(
+        c.env,
+        "SELECT * FROM timesheets WHERE company_id=? AND membership_id=? ORDER BY week_start DESC LIMIT 50",
+        target.company_id,
+        target.id,
+      ).all()
+    ).results,
+    canReview:
+      target.id !== c.get("member").id &&
+      canReset(c.get("member").role, target.role),
+  });
+});
+app.post("/api/timesheets", async (c) => {
+  if (c.get("member").role === "gm")
+    fail(403, "المدير العام لا يقدم طلبات وقت أو كشوف ساعات لنفسه");
+  const b = z
+      .object({ date: workDateSchema })
+      .strict()
+      .parse(await c.req.json()),
+    m = c.get("member");
+  const source = await stmt(
+    c.env,
+    "SELECT time_revision FROM memberships WHERE id=? AND company_id=?",
+    m.id,
+    m.company_id,
+  ).first<any>();
+  const week: any = await workweekSummary(c, m, b.date);
+  if (!week.complete) fail(409, "أكمل الأسبوع وحسم الطلبات قبل إرسال الكشف");
+  const snapshot = sheetSnapshot(week),
+    fingerprint = await digest(snapshot),
+    sheetId = id();
+  await c.env.DB.batch([
+    stmt(
+      c.env,
+      "INSERT INTO timesheets(id,company_id,membership_id,week_start,snapshot,fingerprint,status,created_at,source_revision) VALUES(?,?,?,?,?,?,'pending',?,?)",
+      sheetId,
+      m.company_id,
+      m.id,
+      week.start,
+      snapshot,
+      fingerprint,
+      Date.now(),
+      source.time_revision,
+    ),
+    audit(
+      c.env,
+      c.get("session"),
+      m.company_id,
+      "timesheet.submit",
+      sheetId,
+      "Submitted weekly hours",
+      { fingerprint, weekStart: week.start },
+    ),
+  ]);
+  return c.json({ id: sheetId }, 201);
+});
+app.post("/api/timesheets/:id/review", async (c) => {
+  roles(c, "gm", "am", "manager");
+  const sheet = await stmt(
+    c.env,
+    "SELECT * FROM timesheets WHERE id=? AND company_id=?",
+    uuid.parse(c.req.param("id")),
+    c.get("company").id,
+  ).first<any>();
+  if (!sheet) fail(404, "الكشف غير موجود");
+  const target = await allowedTarget(c, sheet.membership_id);
+  if (
+    target.id === c.get("member").id ||
+    !canReset(c.get("member").role, target.role)
+  )
+    fail(403, "غير مسموح اعتماد الكشف الشخصي");
+  if (sheet.status !== "pending") fail(409, "تم حسم الكشف سابقاً");
+  const b = z
+    .object({
+      decision: z.enum(["approved", "rejected"]),
+      reason: z.string().trim().min(5).max(500),
+    })
+    .strict()
+    .parse(await c.req.json());
+  if (b.decision === "approved") {
+    const week: any = await workweekSummary(c, target, sheet.week_start);
+    if (
+      !week.complete ||
+      (await digest(sheetSnapshot(week))) !== sheet.fingerprint
+    )
+      fail(409, "تغيّرت الساعات؛ ارفض الكشف واطلب إرساله مجدداً");
+  }
+  await c.env.DB.batch([
+    stmt(
+      c.env,
+      "UPDATE timesheets SET status=?,reviewer=?,reason=?,decided_at=? WHERE id=? AND company_id=?",
+      b.decision,
+      c.get("member").id,
+      b.reason,
+      Date.now(),
+      sheet.id,
+      target.company_id,
+    ),
+    audit(
+      c.env,
+      c.get("session"),
+      target.company_id,
+      "timesheet." + b.decision,
+      sheet.id,
+      b.reason,
+      { fingerprint: sheet.fingerprint },
+    ),
+  ]);
+  return c.json({ ok: true });
 });
 app.post("/api/members/:id/early-time-review", async (c) => {
   roles(c, "gm", "am", "manager");
@@ -1311,6 +1805,12 @@ app.put("/api/company", async (c) => {
       timezone: z.string().max(80),
       sessionDays: z.number().int().min(1).max(30),
       gpsAccuracy: z.number().min(10).max(500),
+      overtimePercent: z.number().min(0).max(1000).optional(),
+      weekendDays: z
+        .array(z.number().int().min(0).max(6))
+        .max(7)
+        .refine((d) => new Set(d).size === d.length)
+        .optional(),
     })
     .parse(await c.req.json());
   if (!Intl.supportedValuesOf("currency").includes(b.currency))
@@ -1323,12 +1823,16 @@ app.put("/api/company", async (c) => {
   await c.env.DB.batch([
     stmt(
       c.env,
-      "UPDATE companies SET name=?,currency=?,timezone=?,session_days=?,gps_accuracy=? WHERE id=?",
+      "UPDATE companies SET name=?,currency=?,timezone=?,session_days=?,gps_accuracy=?,overtime_percent=?,weekend_days=? WHERE id=?",
       b.name,
       b.currency,
       b.timezone,
       b.sessionDays,
       b.gpsAccuracy,
+      b.overtimePercent ?? c.get("company").overtime_percent,
+      b.weekendDays
+        ? JSON.stringify(b.weekendDays)
+        : c.get("company").weekend_days,
       c.get("company").id,
     ),
     audit(
@@ -1773,6 +2277,61 @@ app.post("/api/device/requests/:id/approve", async (c) => {
     ),
   ]);
   return c.json({ ok: true });
+});
+app.get("/api/attendance/shift-reminder", async (c) => {
+  const m = c.get("member"),
+    co = c.get("company");
+  const session = await stmt(
+    c.env,
+    "SELECT a.id,a.in_at,b.lat,b.lng,b.radius FROM attendance_logs a JOIN branches b ON b.id=a.branch_id AND b.company_id=a.company_id WHERE a.company_id=? AND a.membership_id=? AND a.out_at IS NULL LIMIT 1",
+    co.id,
+    m.id,
+  ).first<any>();
+  if (!session) return c.json({ reminder: null });
+  const date = companyDate(co.timezone, new Date(session.in_at)),
+    candidates = [];
+  for (const day of [dateOffset(date, -1), date]) {
+    const row = await stmt(
+      c.env,
+      "SELECT plan,timezone FROM work_plan_versions WHERE company_id=? AND membership_id=? AND effective_from<=? ORDER BY effective_from DESC,version DESC LIMIT 1",
+      co.id,
+      m.id,
+      day,
+    ).first<any>();
+    if (!row) continue;
+    const plan = workPlanSchema.parse(JSON.parse(row.plan));
+    const weekday = (new Date(day + "T12:00:00Z").getUTCDay() + 6) % 7;
+    const shift =
+      plan.schedule.mode === "fixed" ? plan.schedule.days[weekday] : null;
+    if (!shift) continue;
+    const window = shiftWindow(day, shift, row.timezone);
+    if (
+      window.status === "resolved" &&
+      session.in_at < window.endAt &&
+      (session.in_at >= window.startAt || day === date)
+    )
+      candidates.push({ window, grace: plan.reminderGraceMinutes });
+  }
+  const contains = candidates.filter((x) => session.in_at >= x.window.startAt);
+  const choice =
+    contains.length === 1
+      ? contains[0]
+      : candidates.length === 1
+        ? candidates[0]
+        : null;
+  return c.json({
+    reminder: choice
+      ? {
+          sessionId: session.id,
+          endAt: choice.window.endAt,
+          graceMs: choice.grace * 60000,
+          lat: session.lat,
+          lng: session.lng,
+          radius: session.radius,
+          accuracy: co.gps_accuracy,
+        }
+      : null,
+  });
 });
 app.get("/api/attendance/mine", async (c) => {
   const m = c.get("member");
@@ -2349,6 +2908,14 @@ export default {
           "UPDATE companies SET status='expired' WHERE status IN ('trial','active') AND ends_at<=?",
           Date.now(),
         ).run();
+        try {
+          await queueShiftReminders(env);
+        } catch (e) {
+          console.error(
+            "shift_reminder_failed",
+            e instanceof Error ? e.message : "unknown",
+          );
+        }
         await deliver(env);
       })(),
     );
