@@ -13,6 +13,7 @@ describe("interface language", () => {
   it("provides English for every static translation key used by the interface", () => {
     for (const file of [
       "apps/web/main.tsx",
+      "apps/web/Schedule.tsx",
       "apps/web/lib.ts",
       "apps/web/LocationPicker.tsx",
       "apps/web/geolocation.ts",

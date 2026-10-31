@@ -1041,3 +1041,50 @@ form > .two-col {
   background: var(--surface);
   border-color: var(--border);
 }
+
+.schedule-layout {
+  display: grid;
+  gap: 20px;
+}
+.schedule-field {
+  display: grid;
+  gap: 6px;
+  margin-block: 12px;
+}
+.schedule-form fieldset {
+  border: 0;
+  padding: 0;
+  min-width: 0;
+}
+.schedule-day {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  margin-block: 10px;
+}
+.schedule-day input[type="checkbox"],
+.schedule-form input[type="checkbox"] {
+  width: auto;
+  margin-inline-end: 8px;
+}
+.schedule-week {
+  list-style: none;
+  padding: 0;
+}
+.schedule-week li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding-block: 10px;
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.schedule-layout summary {
+  cursor: pointer;
+  padding-block: 12px;
+}
+.schedule-layout input,
+.schedule-layout select {
+  max-width: 100%;
+  min-width: 0;
+}

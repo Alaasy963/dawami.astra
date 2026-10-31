@@ -47,6 +47,7 @@ import {
 } from "./lib";
 import "./style.css";
 import AppUpdate from "./AppUpdate";
+import Schedule from "./Schedule";
 import { viewContext } from "./view-context";
 import { notificationLocation } from "./notification-location";
 import PushControls from "./PushControls";
@@ -374,7 +375,9 @@ function App() {
         ? "notifications"
         : new URLSearchParams(location.search).get("view") === "attendance"
           ? "attendance"
-          : "dashboard",
+          : new URLSearchParams(location.search).get("view") === "schedule"
+            ? "schedule"
+            : "dashboard",
     ),
     [revision, setRevision] = useState(0),
     [message, setMessage] = useState(""),
@@ -598,6 +601,7 @@ function App() {
       : [
           ["dashboard", t("نظرة عامة"), LayoutDashboard],
           ["attendance", t("حضوري"), Clock3],
+          ["schedule", t("جدول الدوام"), Clock3],
           ...(manager
             ? [
                 ["members", t("فريق العمل"), Users],
@@ -809,6 +813,7 @@ function App() {
                 online={online}
               />
             )}
+            {actualView === "schedule" && <Schedule key={revision} me={me} />}
             {actualView === "members" && (
               <Members me={me} revision={revision} act={act} busy={busy} />
             )}
