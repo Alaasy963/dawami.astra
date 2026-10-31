@@ -166,6 +166,19 @@ test("real API workflow across isolated tenants and scoped recovery", async () =
       await scheduleRequest(planPath + "?date=2099-01-01")
     ).json()) as any;
     expect(assigned.plan.plan.schedule.days[0].start).toBe("20:00");
+    const monday = new Date("2099-01-01T12:00:00Z");
+    while (monday.getUTCDay() !== 1) monday.setUTCDate(monday.getUTCDate() + 1);
+    const plannedDay = (await (
+      await scheduleRequest(
+        planPath + "?date=" + monday.toISOString().slice(0, 10),
+      )
+    ).json()) as any;
+    expect(plannedDay.shiftWindow).toMatchObject({
+      status: "resolved",
+      elapsedMinutes: 480,
+      workDate: monday.toISOString().slice(0, 10),
+    });
+
     expect(
       (
         (await (

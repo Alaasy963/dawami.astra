@@ -451,5 +451,7 @@
   "الخميس": "Thursday",
   "الجمعة": "Friday",
   "السبت": "Saturday",
-  "الأحد": "Sunday"
+  "الأحد": "Sunday",
+  "مدة الشفت الفعلية بتاريخ العرض بالدقائق": "Actual shift duration on the selected date, in minutes",
+  "وقت الشفت مكرر أو غير موجود بسبب تغيير التوقيت. يلزم مراجعة وقته قبل حساب الساعات.": "The shift time is ambiguous or nonexistent due to a clock change. Review its time before calculating hours."
 }

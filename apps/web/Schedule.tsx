@@ -112,6 +112,19 @@ export default function Schedule({ me }: { me: any }) {
         {result?.data && (
           <>
             <PlanSummary record={result.data.plan} />
+            {result.data.shiftWindow?.status === "resolved" && (
+              <p>
+                {t("مدة الشفت الفعلية بتاريخ العرض بالدقائق")}:{" "}
+                {result.data.shiftWindow.elapsedMinutes}
+              </p>
+            )}
+            {result.data.shiftWindow?.status === "needs_review" && (
+              <p className="error" role="alert">
+                {t(
+                  "وقت الشفت مكرر أو غير موجود بسبب تغيير التوقيت. يلزم مراجعة وقته قبل حساب الساعات.",
+                )}
+              </p>
+            )}
             {editable && (
               <PlanEditor
                 key={`${member}:${date}:${revision}`}

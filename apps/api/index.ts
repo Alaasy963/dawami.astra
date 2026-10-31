@@ -1,3 +1,4 @@
+import { shiftWindow } from "../../packages/domain/shift-window";
 import { shiftSchema, shiftSpan } from "../../packages/domain/work-time";
 import {
   workPlanSchema,
@@ -940,9 +941,14 @@ app.get("/api/members/:id/work-plan", async (c) => {
     target.company_id,
     target.id,
   ).first<any>();
+  const parsed = plan ? JSON.parse(plan.plan) : null;
+  const weekday = (new Date(date + "T12:00:00Z").getUTCDay() + 6) % 7;
+  const shift =
+    parsed?.schedule.mode === "fixed" ? parsed.schedule.days[weekday] : null;
   return c.json({
-    plan: plan ? { ...plan, plan: JSON.parse(plan.plan) } : null,
+    plan: plan ? { ...plan, plan: parsed } : null,
     latestVersion: latest.version,
+    shiftWindow: shift ? shiftWindow(date, shift, plan!.timezone) : null,
   });
 });
 app.post("/api/members/:id/work-plan", async (c) => {
