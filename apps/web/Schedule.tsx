@@ -111,6 +111,11 @@ export default function Schedule({ me }: { me: any }) {
         )}
         {result?.data && (
           <>
+            {result.data.holiday && (
+              <p>
+                {t("عطلة رسمية")}: {result.data.holiday}
+              </p>
+            )}
             <PlanSummary record={result.data.plan} />
             <WorkdaySummary
               key={`${member}:${date}`}
@@ -838,7 +843,7 @@ function WeekSummary({
           {current.data.policyChanged && (
             <p className="error">
               {t(
-                "تغيّر الهدف خلال الأسبوع؛ المقارنة تحتاج مراجعة دون تقسيم تلقائي للهدف.",
+                "تغيّر الهدف أو توجد عطلة خلال الأسبوع؛ المقارنة تحتاج مراجعة دون تقسيم تلقائي للهدف.",
               )}
             </p>
           )}
@@ -883,6 +888,12 @@ function WeekSummary({
                       <bdi>{d.total ? hours(d.total.netMs) : "—"}</bdi>
                     </td>
                     <td>
+                      {d.holiday && (
+                        <span>
+                          {t("عطلة رسمية")}: {d.holiday}
+                          <br />
+                        </span>
+                      )}
                       {d.status === "off"
                         ? t("عطلة")
                         : d.status === "no_plan"

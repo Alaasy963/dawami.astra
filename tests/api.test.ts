@@ -119,6 +119,30 @@ test("real API workflow across isolated tenants and scoped recovery", async () =
         { method, headers, ...(body ? { body: JSON.stringify(body) } : {}) },
         env,
       );
+    const holidayBody = {
+      date: "2099-12-25",
+      name: "Company holiday",
+      active: true,
+      reason: "Future holiday setup",
+    };
+    expect((await scheduleRequest("/holidays", holidayBody)).status).toBe(200);
+    expect(
+      (
+        await scheduleRequest("/holidays", {
+          ...holidayBody,
+          date: "2001-01-01",
+        })
+      ).status,
+    ).toBe(400);
+    const holidayList = (await (
+      await scheduleRequest("/holidays?year=2099")
+    ).json()) as any;
+    expect(holidayList.items).toHaveLength(1);
+    expect(holidayList.items[0]).toMatchObject({
+      company_id: me.member.company_id,
+      date: "2099-12-25",
+      active: 1,
+    });
     const shiftBody = {
       shift: { name: "Night", start: "20:00", end: "04:00" },
       reason: "Test schedule",
@@ -501,6 +525,11 @@ test("real API workflow across isolated tenants and scoped recovery", async () =
         },
         env,
       );
+    expect((await workerRequest("/holidays", holidayBody)).status).toBe(403);
+    expect(
+      ((await (await workerRequest("/holidays?year=2099")).json()) as any)
+        .items,
+    ).toHaveLength(1);
     const manualBody = {
       date: "2026-10-12",
       autofill: true,
@@ -522,7 +551,37 @@ test("real API workflow across isolated tenants and scoped recovery", async () =
     const requestResult = await workerRequest("/manual-time", manualBody);
     expect(requestResult.status).toBe(201);
     const manualId = ((await requestResult.json()) as any).id;
+    const inbox = (await (await scheduleRequest("/time-inbox")).json()) as any;
+    expect(inbox.items.find((r: any) => r.id === manualId)).toMatchObject({
+      kind: "manual",
+      membership_id: scopedMember,
+      canReview: true,
+    });
+    const ownInbox = (await (await workerRequest("/time-inbox")).json()) as any;
+    expect(
+      ownInbox.items.every(
+        (r: any) => r.membership_id === scopedMember && !r.canReview,
+      ),
+    ).toBe(true);
+    expect(ownInbox.items.some((r: any) => r.id === manualId)).toBe(true);
+    const requestNoticeCount = sqlite
+      .prepare(
+        "SELECT COUNT(*) AS n FROM notifications WHERE company_id=? AND title='طلب وقت يدوي جديد'",
+      )
+      .get(me.member.company_id) as any;
+    expect(requestNoticeCount.n).toBeGreaterThan(0);
+
     expect((await workerRequest("/manual-time", manualBody)).status).toBe(409);
+    expect(
+      (
+        sqlite
+          .prepare(
+            "SELECT COUNT(*) AS n FROM notifications WHERE company_id=? AND title='طلب وقت يدوي جديد'",
+          )
+          .get(me.member.company_id) as any
+      ).n,
+    ).toBe(requestNoticeCount.n);
+
     expect(
       (
         await workerRequest(`/manual-time/${manualId}/review`, {
@@ -556,6 +615,23 @@ test("real API workflow across isolated tenants and scoped recovery", async () =
       )
     ).json()) as any;
     expect(manualSummary.total.netMs).toBe(450 * 60000);
+    expect(
+      (
+        (await (
+          await scheduleRequest("/time-inbox?status=approved")
+        ).json()) as any
+      ).items.some((r: any) => r.id === manualId),
+    ).toBe(true);
+    expect(
+      (
+        sqlite
+          .prepare(
+            "SELECT COUNT(*) AS n FROM notifications WHERE company_id=? AND recipient=? AND title='تم حسم طلب الوقت اليدوي'",
+          )
+          .get(me.member.company_id, scopedMember) as any
+      ).n,
+    ).toBe(1);
+
     expect(manualSummary.shift).toMatchObject({
       start: "08:00",
       end: "16:00",
@@ -572,6 +648,30 @@ test("real API workflow across isolated tenants and scoped recovery", async () =
       actualMs: 450 * 60000,
       complete: true,
     });
+    const holidayFixtureId = crypto.randomUUID();
+    sqlite
+      .prepare(
+        "INSERT INTO holidays(id,company_id,date,name,active,created_at) VALUES(?,?,'2026-10-15','Fixture holiday',1,1)",
+      )
+      .run(holidayFixtureId, me.member.company_id);
+    expect(
+      await (
+        await scheduleRequest(
+          `/members/${scopedMember}/workday-summary?date=2026-10-15`,
+        )
+      ).json(),
+    ).toMatchObject({ status: "off", holiday: "Fixture holiday" });
+    expect(
+      (
+        await workerRequest("/manual-time", {
+          ...manualBody,
+          date: "2026-10-15",
+        })
+      ).status,
+    ).toBe(400);
+    sqlite
+      .prepare("UPDATE holidays SET active=0 WHERE id=?")
+      .run(holidayFixtureId);
     const submitSheet = await workerRequest("/timesheets", {
       date: "2026-10-12",
     });

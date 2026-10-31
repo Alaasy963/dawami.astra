@@ -4,7 +4,7 @@ export async function deliver(env: Env) {
   if (!env.VAPID_PRIVATE_KEY || !env.VAPID_PUBLIC_KEY || !env.VAPID_SUBJECT)
     return;
   const jobs = await env.DB.prepare(
-    "SELECT * FROM notification_outbox WHERE status='pending' AND next_at<=? ORDER BY next_at LIMIT 5",
+    "SELECT * FROM notification_outbox WHERE status='pending' AND next_at<=? ORDER BY next_at LIMIT 2",
   )
     .bind(Date.now())
     .all<any>();

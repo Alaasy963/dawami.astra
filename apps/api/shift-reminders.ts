@@ -4,12 +4,14 @@ import { dateOffset, shiftWindow } from "../../packages/domain/shift-window";
 /** Bounded scan for the free plan; cursor rotates across open sessions. */
 export async function queueShiftReminders(env: Env, now = Date.now()) {
   const key = "cron:shift-reminder-cursor";
-  const cursor = await env.SESSIONS.get<{ last: string }>(key, "json");
+  const cursor = await env.DB.prepare("SELECT value FROM job_state WHERE key=?")
+    .bind(key)
+    .first<{ value: string }>();
   const rows = (
     await env.DB.prepare(
-      "SELECT a.id,a.company_id,a.membership_id,a.in_at,c.timezone FROM attendance_logs a JOIN companies c ON c.id=a.company_id JOIN memberships m ON m.id=a.membership_id AND m.company_id=a.company_id WHERE a.out_at IS NULL AND a.id>? AND c.status IN ('active','trial') AND c.ends_at>? AND m.status='active' ORDER BY a.id LIMIT 5",
+      "SELECT a.id,a.company_id,a.membership_id,a.in_at,c.timezone FROM attendance_logs a JOIN companies c ON c.id=a.company_id JOIN memberships m ON m.id=a.membership_id AND m.company_id=a.company_id WHERE a.out_at IS NULL AND a.id>? AND c.status IN ('active','trial') AND c.ends_at>? AND m.status='active' ORDER BY a.id LIMIT 3",
     )
-      .bind(cursor?.last ?? "", now)
+      .bind(cursor?.value ?? "", now)
       .all<any>()
   ).results;
   for (const row of rows) {
@@ -17,9 +19,9 @@ export async function queueShiftReminders(env: Env, now = Date.now()) {
     const candidates = [];
     for (const date of [dateOffset(local, -1), local]) {
       const record = await env.DB.prepare(
-        "SELECT plan,timezone FROM work_plan_versions WHERE company_id=? AND membership_id=? AND effective_from<=? ORDER BY effective_from DESC,version DESC LIMIT 1",
+        "SELECT plan,timezone FROM work_plan_versions WHERE company_id=? AND membership_id=? AND effective_from<=? AND NOT EXISTS(SELECT 1 FROM holidays h WHERE h.company_id=work_plan_versions.company_id AND h.date=? AND h.active=1) ORDER BY effective_from DESC,version DESC LIMIT 1",
       )
-        .bind(row.company_id, row.membership_id, date)
+        .bind(row.company_id, row.membership_id, date, date)
         .first<any>();
       if (!record) continue;
       const plan = workPlanSchema.parse(JSON.parse(record.plan));
@@ -75,9 +77,11 @@ export async function queueShiftReminders(env: Env, now = Date.now()) {
       ),
     ]);
   }
-  await env.SESSIONS.put(
-    key,
-    JSON.stringify({ last: rows.length ? rows[rows.length - 1].id : "" }),
-    { expirationTtl: 86400 },
-  );
+  const next = rows.length ? rows[rows.length - 1].id : "";
+  if (next !== (cursor?.value ?? ""))
+    await env.DB.prepare(
+      "INSERT INTO job_state(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+    )
+      .bind(key, next)
+      .run();
 }

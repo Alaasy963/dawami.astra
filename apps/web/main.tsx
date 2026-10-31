@@ -48,6 +48,8 @@ import {
 import "./style.css";
 import MapBoundary from "./MapBoundary";
 import AppUpdate from "./AppUpdate";
+import Holidays from "./Holidays";
+import TimeInbox from "./TimeInbox";
 import Schedule from "./Schedule";
 import ShiftReminder from "./ShiftReminder";
 import { viewContext } from "./view-context";
@@ -383,7 +385,9 @@ function App() {
           ? "attendance"
           : new URLSearchParams(location.search).get("view") === "schedule"
             ? "schedule"
-            : "dashboard",
+            : new URLSearchParams(location.search).get("view") === "timeInbox"
+              ? "timeInbox"
+              : "dashboard",
     ),
     [revision, setRevision] = useState(0),
     [message, setMessage] = useState(""),
@@ -608,6 +612,8 @@ function App() {
           ["dashboard", t("نظرة عامة"), LayoutDashboard],
           ["attendance", t("حضوري"), Clock3],
           ["schedule", t("جدول الدوام"), Clock3],
+          ["timeInbox", t("طلبات الوقت"), Clock3],
+          ["holidays", t("العطل الرسمية"), Clock3],
           ...(manager
             ? [
                 ["members", t("فريق العمل"), Users],
@@ -823,6 +829,8 @@ function App() {
               />
             )}
             {actualView === "schedule" && <Schedule key={revision} me={me} />}
+            {actualView === "timeInbox" && <TimeInbox key={revision} />}
+            {actualView === "holidays" && <Holidays key={revision} me={me} />}
             {actualView === "members" && (
               <Members me={me} revision={revision} act={act} busy={busy} />
             )}
@@ -833,7 +841,7 @@ function App() {
               <CompanySettings me={me} act={act} busy={busy} />
             )}
             {actualView === "notifications" && (
-              <Notifications revision={revision} act={act} />
+              <Notifications revision={revision} act={act} setView={setView} />
             )}
             {actualView === "devices" && (
               <Devices revision={revision} act={act} />
@@ -1959,7 +1967,15 @@ function CompanySettings({
     </section>
   );
 }
-function Notifications({ revision, act }: { revision: number; act: Action }) {
+function Notifications({
+  revision,
+  act,
+  setView,
+}: {
+  revision: number;
+  act: Action;
+  setView: (view: string) => void;
+}) {
   const { data, error } = useData("/notifications", revision),
     [location, setLocation] = useState<{
       lat: number;
@@ -1992,6 +2008,8 @@ function Notifications({ revision, act }: { revision: number; act: Action }) {
               void act(async () => {
                 await api(`/notifications/${n.id}/read`, {});
                 setLocation(notificationLocation(n.url));
+                if (n.url === "/?view=timeInbox") setView("timeInbox");
+                if (n.url === "/?view=schedule") setView("schedule");
               }, t("تمت قراءة الإشعار"))
             }
           >

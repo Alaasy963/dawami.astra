@@ -151,7 +151,7 @@ app.onError((e, c) => {
       400,
     );
   if (
-    /manual_time_conflict|timesheet_conflict|timesheets.company_id|early_time_reviews.company_id|early_review_invalid|shift_versions.company_id|work_plan_versions.company_id|push_identity_conflict|rebind_already_decided|attendance_already_closed|attendance_overlap|memberships.company_id, memberships.device_hash/.test(
+    /holiday_conflict|holidays.company_id|manual_time_conflict|timesheet_conflict|timesheets.company_id|early_time_reviews.company_id|early_review_invalid|shift_versions.company_id|work_plan_versions.company_id|push_identity_conflict|rebind_already_decided|attendance_already_closed|attendance_overlap|memberships.company_id, memberships.device_hash/.test(
       e.message,
     )
   )
@@ -935,6 +935,71 @@ app.put("/api/shifts/:id", async (c) => {
   ]);
   return c.json({ id: templateId, version: old.version + 1 });
 });
+app.get("/api/holidays", async (c) => {
+  const year = z.coerce
+    .number()
+    .int()
+    .min(2000)
+    .max(2200)
+    .parse(
+      c.req.query("year") ?? companyDate(c.get("company").timezone).slice(0, 4),
+    );
+  return c.json({
+    items: (
+      await stmt(
+        c.env,
+        "SELECT * FROM holidays WHERE company_id=? AND date>=? AND date<=? ORDER BY date",
+        c.get("company").id,
+        `${year}-01-01`,
+        `${year}-12-31`,
+      ).all()
+    ).results,
+  });
+});
+app.post("/api/holidays", async (c) => {
+  roles(c, "gm", "am");
+  const b = z
+    .object({
+      date: workDateSchema,
+      name: z.string().trim().min(2).max(100),
+      active: z.boolean(),
+      reason: z.string().trim().min(5).max(500),
+    })
+    .strict()
+    .parse(await c.req.json());
+  if (b.date <= companyDate(c.get("company").timezone))
+    fail(400, "تعديل العطل يبدأ من يوم قادم لحماية السجلات السابقة");
+  const old = await stmt(
+    c.env,
+    "SELECT * FROM holidays WHERE company_id=? AND date=?",
+    c.get("company").id,
+    b.date,
+  ).first<any>();
+  const holidayId = old?.id ?? id();
+  await c.env.DB.batch([
+    stmt(
+      c.env,
+      "INSERT INTO holidays(id,company_id,date,name,active,created_at) VALUES(?,?,?,?,?,?) ON CONFLICT(company_id,date) DO UPDATE SET name=excluded.name,active=excluded.active",
+      holidayId,
+      c.get("company").id,
+      b.date,
+      b.name,
+      b.active ? 1 : 0,
+      Date.now(),
+    ),
+    audit(
+      c.env,
+      c.get("session"),
+      c.get("company").id,
+      "holiday.update",
+      holidayId,
+      b.reason,
+      b,
+      old,
+    ),
+  ]);
+  return c.json({ id: holidayId });
+});
 app.get("/api/members/:id/work-plan", async (c) => {
   const target = await allowedTarget(c, uuid.parse(c.req.param("id")));
   const date = workDateSchema.parse(
@@ -953,6 +1018,12 @@ app.get("/api/members/:id/work-plan", async (c) => {
     target.company_id,
     target.id,
   ).first<any>();
+  const holiday = await stmt(
+    c.env,
+    "SELECT name FROM holidays WHERE company_id=? AND date=? AND active=1",
+    target.company_id,
+    date,
+  ).first<any>();
   const parsed = plan ? JSON.parse(plan.plan) : null;
   const weekday = (new Date(date + "T12:00:00Z").getUTCDay() + 6) % 7;
   const shift =
@@ -960,7 +1031,9 @@ app.get("/api/members/:id/work-plan", async (c) => {
   return c.json({
     plan: plan ? { ...plan, plan: parsed } : null,
     latestVersion: latest.version,
-    shiftWindow: shift ? shiftWindow(date, shift, plan!.timezone) : null,
+    holiday: holiday?.name ?? null,
+    shiftWindow:
+      shift && !holiday ? shiftWindow(date, shift, plan!.timezone) : null,
   });
 });
 async function workdaySummary(
@@ -969,6 +1042,21 @@ async function workdaySummary(
   date: string,
   cache = new Map<string, any>(),
 ) {
+  if (!cache.has("holidays"))
+    cache.set(
+      "holidays",
+      (
+        await stmt(
+          c.env,
+          "SELECT date,name FROM holidays WHERE company_id=? AND date>=? AND date<=? AND active=1",
+          target.company_id,
+          dateOffset(date, -8),
+          dateOffset(date, 8),
+        ).all<any>()
+      ).results,
+    );
+  const holidayFor = (day: string) =>
+    cache.get("holidays").find((h: any) => h.date === day)?.name ?? null;
   const load = async (day: string) => {
     const row = cache.has(day)
       ? cache.get(day)
@@ -989,8 +1077,9 @@ async function workdaySummary(
         plan,
         planId: row.id,
         timezone: row.timezone,
+        holiday: holidayFor(day),
       };
-    const shift = plan.schedule.days[weekday];
+    const shift = holidayFor(day) ? null : plan.schedule.days[weekday];
     return shift
       ? {
           planId: row.id,
@@ -1031,9 +1120,24 @@ async function workdaySummary(
     const closed = rows.filter(
       (r) => r.out_at !== null && !invalid.includes(r),
     );
+    const calculationPlan =
+      current.holiday &&
+      current.plan.schedule.mode === "target" &&
+      current.plan.schedule.period === "daily"
+        ? {
+            ...current.plan,
+            schedule: {
+              ...current.plan.schedule,
+              days: current.plan.schedule.days.filter(
+                (d) =>
+                  d !== (new Date(date + "T12:00:00Z").getUTCDay() + 6) % 7,
+              ),
+            },
+          }
+        : current.plan;
     const total = targetDayTotal(
       date,
-      current.plan,
+      calculationPlan,
       closed.map((r) => ({ inAt: r.in_at, outAt: r.out_at })),
     );
     const pending = await stmt(
@@ -1045,6 +1149,7 @@ async function workdaySummary(
     return {
       status: "ok",
       mode: "target",
+      holiday: current.holiday,
       period:
         current.plan.schedule.mode === "target"
           ? current.plan.schedule.period
@@ -1087,6 +1192,7 @@ async function workdaySummary(
     ).first<any>();
     return {
       status: extra.count ? "unscheduled_time" : "off",
+      holiday: holidayFor(date),
       planId: current.planId,
       provisional: true,
     };
@@ -1236,7 +1342,9 @@ async function workweekSummary(c: any, target: Member, date: string) {
   const weekly = active.filter((d) => d.period === "weekly");
   const consistent =
     weekly.length === 0 ||
-    (weekly.length === 7 && new Set(weekly.map((d) => d.planId)).size === 1);
+    (weekly.length === 7 &&
+      !weekly.some((d) => d.holiday) &&
+      new Set(weekly.map((d) => d.planId)).size === 1);
   const actualMs = active.reduce((v, d) => v + d.total.netMs, 0);
   const coverage = days.every(
     (d: any) => d.status === "ok" || d.status === "off",
@@ -1289,6 +1397,86 @@ app.get("/api/members/:id/workweek-summary", async (c) => {
   );
 });
 
+// Requests and decisions share the transaction with their audit and notifications.
+async function timeNotice(
+  c: any,
+  target: Member,
+  title: string,
+  reviewerNotice: boolean,
+) {
+  const recipients = reviewerNotice
+    ? (
+        await stmt(
+          c.env,
+          "SELECT m.id,m.role FROM memberships m WHERE m.company_id=? AND m.status='active' AND m.id<>? AND (m.role IN ('gm','am') OR (m.role='manager' AND EXISTS(SELECT 1 FROM manager_scopes s WHERE s.company_id=m.company_id AND s.membership_id=m.id AND (s.branch_id=? OR s.department_id=?))))",
+          target.company_id,
+          target.id,
+          target.branch_id,
+          target.department_id,
+        ).all<any>()
+      ).results.filter((r: any) => canReset(r.role, target.role))
+    : [{ id: target.id }];
+  return recipients.flatMap((r: any) => {
+    const noticeId = id(),
+      body = "افتح طلبات الوقت لمراجعة التفاصيل",
+      url = "/?view=timeInbox";
+    return [
+      stmt(
+        c.env,
+        "INSERT INTO notifications(id,company_id,recipient,title,body,url,created_at) VALUES(?,?,?,?,?,?,?)",
+        noticeId,
+        target.company_id,
+        r.id,
+        title,
+        body,
+        url,
+        Date.now(),
+      ),
+      stmt(
+        c.env,
+        "INSERT INTO notification_outbox(id,company_id,recipient,payload,attempts,next_at,status) VALUES(?,?,?,?,0,?,'pending')",
+        noticeId,
+        target.company_id,
+        r.id,
+        JSON.stringify({ title, body, url }),
+        Date.now(),
+      ),
+    ];
+  });
+}
+app.get("/api/time-inbox", async (c) => {
+  const actor = c.get("member"),
+    scope = memberScope(actor);
+  const status = z
+    .enum(["pending", "approved", "rejected"])
+    .parse(c.req.query("status") ?? "pending");
+  const items = [];
+  for (const [table, kind, dateColumn, reasonColumn] of [
+    ["manual_time_requests", "manual", "work_date", "reason"],
+    ["timesheets", "timesheet", "week_start", "reason"],
+  ]) {
+    const rows = (
+      await stmt(
+        c.env,
+        `SELECT r.id,r.membership_id,r.status,r.created_at,r.${dateColumn} AS date,r.${reasonColumn} AS reason,m.role,u.name FROM ${table} r JOIN memberships m ON m.id=r.membership_id AND m.company_id=r.company_id JOIN users u ON u.id=m.user_id WHERE r.company_id=? AND r.status=?${scope.sql} AND (m.id=? OR m.role='worker' OR (?='gm' AND m.role IN ('manager','am'))) ORDER BY r.created_at DESC LIMIT 101`,
+        actor.company_id,
+        status,
+        ...scope.args,
+        actor.id,
+        actor.role,
+      ).all<any>()
+    ).results;
+    items.push(
+      ...rows.map((r: any) => ({
+        ...r,
+        kind,
+        canReview: r.membership_id !== actor.id && canReset(actor.role, r.role),
+      })),
+    );
+  }
+  items.sort((a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id));
+  return c.json({ items: items.slice(0, 100), truncated: items.length > 100 });
+});
 app.get("/api/members/:id/manual-time", async (c) => {
   const target = await allowedTarget(c, uuid.parse(c.req.param("id")));
   return c.json({
@@ -1330,6 +1518,15 @@ app.post("/api/manual-time", async (c) => {
   const plan = workPlanSchema.parse(JSON.parse(row.plan));
   let inAt: number, outAt: number;
   if (b.autofill) {
+    if (
+      await stmt(
+        c.env,
+        "SELECT id FROM holidays WHERE company_id=? AND date=? AND active=1",
+        m.company_id,
+        b.date,
+      ).first()
+    )
+      fail(400, "لا تعبئة تلقائية في عطلة رسمية؛ أدخل الوقت الفعلي للمراجعة");
     const weekday = (new Date(b.date + "T12:00:00Z").getUTCDay() + 6) % 7;
     const shift =
       plan.schedule.mode === "fixed" ? plan.schedule.days[weekday] : null;
@@ -1359,7 +1556,9 @@ app.post("/api/manual-time", async (c) => {
   if (outAt <= inAt || outAt - inAt > 86400000 || outAt > Date.now())
     fail(400, "حدد فترة منتهية لا تتجاوز 24 ساعة");
   const requestId = id();
+  const notices = await timeNotice(c, m, "طلب وقت يدوي جديد", true);
   await c.env.DB.batch([
+    ...notices,
     stmt(
       c.env,
       "INSERT INTO manual_time_requests(id,company_id,membership_id,plan_id,work_date,in_at,out_at,reason,status,created_at) VALUES(?,?,?,?,?,?,?,?,'pending',?)",
@@ -1408,7 +1607,9 @@ app.post("/api/manual-time/:id/review", async (c) => {
     })
     .strict()
     .parse(await c.req.json());
+  const notices = await timeNotice(c, target, "تم حسم طلب الوقت اليدوي", false);
   await c.env.DB.batch([
+    ...notices,
     stmt(
       c.env,
       "UPDATE manual_time_requests SET status=?,reviewer=?,review_reason=?,decided_at=? WHERE id=? AND company_id=?",
@@ -1492,7 +1693,9 @@ app.post("/api/timesheets", async (c) => {
   const snapshot = sheetSnapshot(week),
     fingerprint = await digest(snapshot),
     sheetId = id();
+  const notices = await timeNotice(c, m, "كشف ساعات جديد للاعتماد", true);
   await c.env.DB.batch([
+    ...notices,
     stmt(
       c.env,
       "INSERT INTO timesheets(id,company_id,membership_id,week_start,snapshot,fingerprint,status,created_at,source_revision) VALUES(?,?,?,?,?,?,'pending',?,?)",
@@ -1548,7 +1751,9 @@ app.post("/api/timesheets/:id/review", async (c) => {
     )
       fail(409, "تغيّرت الساعات؛ ارفض الكشف واطلب إرساله مجدداً");
   }
+  const notices = await timeNotice(c, target, "تم حسم كشف الساعات", false);
   await c.env.DB.batch([
+    ...notices,
     stmt(
       c.env,
       "UPDATE timesheets SET status=?,reviewer=?,reason=?,decided_at=? WHERE id=? AND company_id=?",
@@ -2293,9 +2498,10 @@ app.get("/api/attendance/shift-reminder", async (c) => {
   for (const day of [dateOffset(date, -1), date]) {
     const row = await stmt(
       c.env,
-      "SELECT plan,timezone FROM work_plan_versions WHERE company_id=? AND membership_id=? AND effective_from<=? ORDER BY effective_from DESC,version DESC LIMIT 1",
+      "SELECT plan,timezone FROM work_plan_versions WHERE company_id=? AND membership_id=? AND effective_from<=? AND NOT EXISTS(SELECT 1 FROM holidays h WHERE h.company_id=work_plan_versions.company_id AND h.date=? AND h.active=1) ORDER BY effective_from DESC,version DESC LIMIT 1",
       co.id,
       m.id,
+      day,
       day,
     ).first<any>();
     if (!row) continue;

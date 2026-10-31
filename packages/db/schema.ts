@@ -379,3 +379,26 @@ export const timesheets = sqliteTable(
     ),
   ],
 );
+
+export const holidays = sqliteTable(
+  "holidays",
+  {
+    id: text().primaryKey(),
+    companyId: text("company_id")
+      .notNull()
+      .references(() => companies.id),
+    date: text().notNull(),
+    name: text().notNull(),
+    active: integer().notNull().default(1),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("holiday_company_date").on(t.companyId, t.date),
+    check("holiday_active", sql`${t.active} IN (0,1)`),
+  ],
+);
+
+export const jobState = sqliteTable("job_state", {
+  key: text().primaryKey(),
+  value: text().notNull(),
+});

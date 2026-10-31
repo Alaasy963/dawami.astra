@@ -522,5 +522,19 @@
   "العطلة الأسبوعية الافتراضية للخطط الجديدة": "Default weekly days off for new plans",
   "المدير العام لا يقدم طلبات وقت أو كشوف ساعات لنفسه": "The general manager does not submit personal time requests or timesheets.",
   "تعذر تحميل الخريطة. بيانات النموذج محفوظة على الشاشة؛ حدّث التطبيق عند توفر الإنترنت ثم أعد المحاولة.": "The map could not load. Your form remains on screen; update the app when online and try again.",
-  "الشفت المخطط": "Planned shift"
+  "الشفت المخطط": "Planned shift",
+  "طلبات الوقت": "Time requests",
+  "تظهر أحدث 100 نتيجة فقط": "Only the latest 100 results are shown.",
+  "العطل الرسمية": "Public holidays",
+  "يضيف المدير عطل الشركة. تعديل العطل للأيام القادمة فقط ولا يغيّر السجلات السابقة.": "Managers maintain company holidays. Only future dates can be changed to protect past records.",
+  "السنة": "Year",
+  "لا توجد عطل مسجلة لهذه السنة": "No holidays recorded for this year.",
+  "مفعّلة": "Active",
+  "ملغاة": "Cancelled",
+  "إضافة أو تعديل عطلة": "Add or edit a holiday",
+  "لتعديل عطلة موجودة أدخل التاريخ نفسه؛ أزل التفعيل لإلغائها.": "Use the same date to edit an existing holiday; uncheck Active to cancel it.",
+  "اسم العطلة": "Holiday name",
+  "حفظ العطلة": "Save holiday",
+  "عطلة رسمية": "Public holiday",
+  "تغيّر الهدف أو توجد عطلة خلال الأسبوع؛ المقارنة تحتاج مراجعة دون تقسيم تلقائي للهدف.": "The target changed or a holiday falls in this week. Review is needed; the target is not automatically prorated."
 }
