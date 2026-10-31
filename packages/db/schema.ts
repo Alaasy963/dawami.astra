@@ -283,3 +283,32 @@ export const workPlanVersions = sqliteTable(
     ),
   ],
 );
+
+export const earlyTimeReviews = sqliteTable(
+  "early_time_reviews",
+  {
+    id: text().primaryKey(),
+    companyId: text("company_id").notNull(),
+    sessionId: text("session_id")
+      .notNull()
+      .references(() => punches.id),
+    planId: text("plan_id")
+      .notNull()
+      .references(() => workPlanVersions.id),
+    inAt: integer("in_at").notNull(),
+    shiftStart: integer("shift_start").notNull(),
+    decision: text().notNull(),
+    reason: text().notNull(),
+    actor: text().notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("early_review_once").on(t.companyId, t.sessionId, t.planId),
+    foreignKey({
+      columns: [t.companyId, t.actor],
+      foreignColumns: [memberships.companyId, memberships.id],
+    }),
+    check("early_review_decision", sql`${t.decision} IN ('approve','reject')`),
+    check("early_review_bounds", sql`${t.inAt} < ${t.shiftStart}`),
+  ],
+);

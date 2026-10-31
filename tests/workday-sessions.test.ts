@@ -125,3 +125,16 @@ it("keeps invalid time records out of totals", () => {
     ).review[0].reason,
   ).toBe("invalid_time");
 });
+
+it("counts approved early time but excludes rejected early time", () => {
+  const a = session("a", "2026-10-31T19:45", "2026-10-31T22:00");
+  expect(
+    groupWorkdaySessions([a], [day("2026-10-31")], { a: "approve" }).days[0]
+      .netMs,
+  ).toBe(135 * 60000);
+  const rejected = groupWorkdaySessions([a], [day("2026-10-31")], {
+    a: "reject",
+  });
+  expect(rejected.days[0].netMs).toBe(120 * 60000);
+  expect(rejected.review).toEqual([]);
+});

@@ -20,6 +20,7 @@ type Day = { window: Window; breakPolicy: z.input<typeof breakPolicySchema> };
 export function groupWorkdaySessions(
   sessions: AttendanceSession[],
   days: Day[],
+  decisions: Record<string, "approve" | "reject"> = {},
 ) {
   const seenDates = new Set<string>();
   for (const day of days) {
@@ -104,8 +105,11 @@ export function groupWorkdaySessions(
       continue;
     }
     const date = match.workDate;
-    const countedStart = Math.max(session.inAt, match.startAt);
-    if (countedStart > session.inAt)
+    const countedStart =
+      decisions[session.id] === "approve"
+        ? session.inAt
+        : Math.max(session.inAt, match.startAt);
+    if (countedStart > session.inAt && decisions[session.id] !== "reject")
       review.push({
         id: session.id,
         reason: "early_arrival",

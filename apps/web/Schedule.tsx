@@ -117,6 +117,8 @@ export default function Schedule({ me }: { me: any }) {
               member={member}
               date={date}
               revision={revision}
+              busy={busy}
+              save={save}
             />
             {result.data.shiftWindow?.status === "resolved" && (
               <p>
@@ -580,10 +582,14 @@ function WorkdaySummary({
   member,
   date,
   revision,
+  busy,
+  save,
 }: {
   member: string;
   date: string;
   revision: number;
+  busy: boolean;
+  save: (fn: () => Promise<any>) => Promise<void>;
 }) {
   const result = useLoad(
     `/members/${member}/workday-summary?date=${date}`,
@@ -648,10 +654,62 @@ function WorkdaySummary({
                 <>
                   {t("وقت مبكر بانتظار مراجعة المدير")}:{" "}
                   <bdi>{duration(r.earlyMs)}</bdi>
+                  {data.canReview && (
+                    <form
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        const f = new FormData(e.currentTarget);
+                        const decision = (
+                          e.nativeEvent as SubmitEvent
+                        ).submitter?.getAttribute("value");
+                        void save(() =>
+                          api(`/members/${member}/early-time-review`, {
+                            date,
+                            sessionId: r.id,
+                            planId: data.planId,
+                            shiftStart: data.startAt,
+                            earlyMs: r.earlyMs,
+                            decision,
+                            reason: f.get("reason"),
+                          }),
+                        );
+                      }}
+                    >
+                      <Field name={t("سبب قرار الوقت المبكر")}>
+                        <input
+                          name="reason"
+                          required
+                          minLength={5}
+                          maxLength={500}
+                          disabled={busy}
+                        />
+                      </Field>
+                      <button value="approve" disabled={busy}>
+                        {t("اعتماد الوقت المبكر")}
+                      </button>{" "}
+                      <button className="ghost" value="reject" disabled={busy}>
+                        {t("رفض الوقت المبكر")}
+                      </button>
+                    </form>
+                  )}
                 </>
               ) : (
                 t("جلسة لا يمكن نسبتها للشفت تلقائياً؛ تحتاج مراجعة.")
               )}
+            </li>
+          ))}
+        </ul>
+      )}
+      {data.decisions?.length > 0 && (
+        <ul>
+          {data.decisions.map((d: any) => (
+            <li key={d.sessionId}>
+              {t(
+                d.decision === "approve"
+                  ? "تم اعتماد الوقت المبكر"
+                  : "تم رفض الوقت المبكر",
+              )}
+              : {d.reason}
             </li>
           ))}
         </ul>

@@ -242,6 +242,19 @@ test("real API workflow across isolated tenants and scoped recovery", async () =
       earlyMs: 15 * 60000,
       workDate: monday.toISOString().slice(0, 10),
     });
+    expect(
+      (
+        await scheduleRequest(`/members/${me.member.id}/early-time-review`, {
+          date: monday.toISOString().slice(0, 10),
+          sessionId: summarySession,
+          planId: summary.planId,
+          shiftStart: summary.startAt,
+          earlyMs: 15 * 60000,
+          decision: "approve",
+          reason: "Self review prohibited",
+        })
+      ).status,
+    ).toBe(403);
     sqlite
       .prepare("DELETE FROM attendance_logs WHERE id=?")
       .run(summarySession);
@@ -351,6 +364,78 @@ test("real API workflow across isolated tenants and scoped recovery", async () =
         )
       ).status,
     ).toBe(200);
+
+    const earlySession = crypto.randomUUID();
+    sqlite
+      .prepare(
+        "INSERT INTO attendance_logs(id,company_id,membership_id,branch_id,in_at,out_at,in_lat,in_lng,device_hash,work_date) VALUES(?,?,?,?,?,?,0,0,'review-fixture',?)",
+      )
+      .run(
+        earlySession,
+        me.member.company_id,
+        scopedMember,
+        fixtureBranch.id,
+        plannedDay.shiftWindow.startAt - 15 * 60000,
+        plannedDay.shiftWindow.endAt,
+        monday.toISOString().slice(0, 10),
+      );
+    const scopedSummaryPath = `/members/${scopedMember}/workday-summary?date=${monday.toISOString().slice(0, 10)}`;
+    const scopedSummary = (await (
+      await scheduleRequest(scopedSummaryPath)
+    ).json()) as any;
+    const decisionBody = {
+      date: monday.toISOString().slice(0, 10),
+      sessionId: earlySession,
+      planId: scopedSummary.planId,
+      shiftStart: scopedSummary.startAt,
+      earlyMs: 15 * 60000,
+      decision: "approve",
+      reason: "Manager checked arrival",
+    };
+    const decisionPath = `/members/${scopedMember}/early-time-review`;
+    expect(
+      (
+        await scheduleRequest(decisionPath, {
+          ...decisionBody,
+          earlyMs: 20 * 60000,
+        })
+      ).status,
+    ).toBe(409);
+    sqlite.exec(
+      "CREATE TRIGGER test_early_audit_failure BEFORE INSERT ON audit_logs WHEN NEW.action='early_time.approve' BEGIN SELECT RAISE(ABORT,'simulated audit failure'); END;",
+    );
+    expect((await scheduleRequest(decisionPath, decisionBody)).status).toBe(
+      500,
+    );
+    sqlite.exec("DROP TRIGGER test_early_audit_failure");
+    expect(
+      sqlite
+        .prepare(
+          "SELECT COUNT(*) AS n FROM early_time_reviews WHERE session_id=?",
+        )
+        .get(earlySession)?.n,
+    ).toBe(0);
+    expect((await scheduleRequest(decisionPath, decisionBody)).status).toBe(
+      200,
+    );
+    expect((await scheduleRequest(decisionPath, decisionBody)).status).toBe(
+      409,
+    );
+    const afterReview = (await (
+      await scheduleRequest(scopedSummaryPath)
+    ).json()) as any;
+    expect(afterReview.total.netMs).toBe(465 * 60000);
+    expect(afterReview.review).toEqual([]);
+    expect(
+      sqlite
+        .prepare(
+          "SELECT COUNT(*) AS n FROM audit_logs WHERE action='early_time.approve' AND target=?",
+        )
+        .get(earlySession)?.n,
+    ).toBe(1);
+    expect(() =>
+      sqlite.exec("UPDATE early_time_reviews SET decision='reject'"),
+    ).toThrow(/append_only/);
     sqlite
       .prepare("UPDATE memberships SET role='gm' WHERE id=?")
       .run(me.member.id);

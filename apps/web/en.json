@@ -465,5 +465,10 @@
   "جلسات مفتوحة غير محتسبة": "Open sessions not counted",
   "أحداث حضور معلقة للمراجعة في هذا الحساب": "Attendance events awaiting review for this account",
   "وقت مبكر بانتظار مراجعة المدير": "Early time awaiting manager review",
-  "جلسة لا يمكن نسبتها للشفت تلقائياً؛ تحتاج مراجعة.": "This session cannot be assigned automatically; review is required."
+  "جلسة لا يمكن نسبتها للشفت تلقائياً؛ تحتاج مراجعة.": "This session cannot be assigned automatically; review is required.",
+  "سبب قرار الوقت المبكر": "Reason for early-time decision",
+  "اعتماد الوقت المبكر": "Approve early time",
+  "رفض الوقت المبكر": "Reject early time",
+  "تم اعتماد الوقت المبكر": "Early time approved",
+  "تم رفض الوقت المبكر": "Early time rejected"
 }

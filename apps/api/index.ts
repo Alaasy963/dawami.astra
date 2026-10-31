@@ -140,7 +140,7 @@ app.onError((e, c) => {
       400,
     );
   if (
-    /shift_versions.company_id|work_plan_versions.company_id|push_identity_conflict|rebind_already_decided|attendance_already_closed|attendance_overlap|memberships.company_id, memberships.device_hash/.test(
+    /early_time_reviews.company_id|early_review_invalid|shift_versions.company_id|work_plan_versions.company_id|push_identity_conflict|rebind_already_decided|attendance_already_closed|attendance_overlap|memberships.company_id, memberships.device_hash/.test(
       e.message,
     )
   )
@@ -952,11 +952,7 @@ app.get("/api/members/:id/work-plan", async (c) => {
     shiftWindow: shift ? shiftWindow(date, shift, plan!.timezone) : null,
   });
 });
-app.get("/api/members/:id/workday-summary", async (c) => {
-  const target = await allowedTarget(c, uuid.parse(c.req.param("id")));
-  const date = workDateSchema.parse(
-    c.req.query("date") ?? companyDate(c.get("company").timezone),
-  );
+async function workdaySummary(c: any, target: Member, date: string) {
   const load = async (day: string) => {
     const row = await stmt(
       c.env,
@@ -972,6 +968,7 @@ app.get("/api/members/:id/workday-summary", async (c) => {
     const shift = plan.schedule.days[weekday];
     return shift
       ? {
+          planId: row.id,
           kind: "shift" as const,
           window: shiftWindow(day, shift, row.timezone),
           breakPolicy: plan.breakPolicy,
@@ -980,12 +977,12 @@ app.get("/api/members/:id/workday-summary", async (c) => {
   };
   const current = await load(date);
   if (!current || current.kind !== "shift")
-    return c.json({
+    return {
       status: !current ? "no_plan" : current.kind,
       provisional: true,
-    });
+    };
   if (current.window.status !== "resolved")
-    return c.json({ status: "unresolved_shift", provisional: true });
+    return { status: "unresolved_shift", provisional: true };
   const startAt = current.window.startAt,
     endAt = current.window.endAt;
   const neighbors = await Promise.all([
@@ -1007,10 +1004,27 @@ app.get("/api/members/:id/workday-summary", async (c) => {
     ).all<any>()
   ).results;
   if (rows.length > 500)
-    return c.json({ status: "too_many_sessions", provisional: true });
+    return { status: "too_many_sessions", provisional: true };
   const long = rows.filter(
     (r) => r.out_at !== null && r.out_at - r.in_at > 24 * 60 * 60 * 1000,
   );
+  const decisionsRows = (
+    await stmt(
+      c.env,
+      "SELECT * FROM early_time_reviews WHERE company_id=? AND plan_id=? AND shift_start=?",
+      target.company_id,
+      current.planId,
+      startAt,
+    ).all<any>()
+  ).results;
+  const decisions: Record<string, "approve" | "reject"> = {};
+  for (const decision of decisionsRows)
+    if (
+      rows.some(
+        (r) => r.id === decision.session_id && r.in_at === decision.in_at,
+      )
+    )
+      decisions[decision.session_id] = decision.decision;
   const result = groupWorkdaySessions(
     rows
       .filter((r) => !long.includes(r))
@@ -1021,6 +1035,7 @@ app.get("/api/members/:id/workday-summary", async (c) => {
         status: "accepted" as const,
       })),
     days,
+    decisions,
   );
   const total = result.days.find((d) => d.workDate === date)!;
   const pending = await stmt(
@@ -1029,8 +1044,17 @@ app.get("/api/members/:id/workday-summary", async (c) => {
     target.company_id,
     target.id,
   ).first<any>();
-  return c.json({
+  return {
     status: "ok",
+    planId: current.planId,
+    canReview:
+      c.get("member").id !== target.id &&
+      canReset(c.get("member").role, target.role),
+    decisions: decisionsRows.map((d) => ({
+      sessionId: d.session_id,
+      decision: d.decision,
+      reason: d.reason,
+    })),
     provisional: true,
     date,
     startAt,
@@ -1044,7 +1068,76 @@ app.get("/api/members/:id/workday-summary", async (c) => {
     pendingCount: pending.count,
     complete:
       result.complete && !long.length && !pending.count && Date.now() >= endAt,
-  });
+  };
+}
+app.get("/api/members/:id/workday-summary", async (c) => {
+  const target = await allowedTarget(c, uuid.parse(c.req.param("id")));
+  const date = workDateSchema.parse(
+    c.req.query("date") ?? companyDate(c.get("company").timezone),
+  );
+  return c.json(await workdaySummary(c, target, date));
+});
+app.post("/api/members/:id/early-time-review", async (c) => {
+  roles(c, "gm", "am", "manager");
+  const target = await allowedTarget(c, uuid.parse(c.req.param("id")));
+  if (
+    target.id === c.get("member").id ||
+    !canReset(c.get("member").role, target.role)
+  )
+    fail(403, "ما فيك تعتمد وقتك أو وقت مدير خارج صلاحيتك");
+  const b = z
+    .object({
+      date: workDateSchema,
+      sessionId: uuid,
+      planId: uuid,
+      shiftStart: z.number().int(),
+      earlyMs: z.number().int().positive(),
+      decision: z.enum(["approve", "reject"]),
+      reason: z.string().trim().min(5).max(500),
+    })
+    .strict()
+    .parse(await c.req.json());
+  const summary: any = await workdaySummary(c, target, b.date);
+  const pending = summary.review?.find(
+    (r: any) =>
+      r.id === b.sessionId &&
+      r.reason === "early_arrival" &&
+      r.workDate === b.date,
+  );
+  if (
+    summary.status !== "ok" ||
+    !pending ||
+    summary.planId !== b.planId ||
+    summary.startAt !== b.shiftStart ||
+    pending.earlyMs !== b.earlyMs
+  )
+    fail(409, "تغيّرت بيانات الوقت أو تم حسمه. حدّث الصفحة");
+  await c.env.DB.batch([
+    stmt(
+      c.env,
+      "INSERT INTO early_time_reviews(id,company_id,session_id,plan_id,in_at,shift_start,decision,reason,actor,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+      id(),
+      target.company_id,
+      b.sessionId,
+      b.planId,
+      b.shiftStart - b.earlyMs,
+      b.shiftStart,
+      b.decision,
+      b.reason,
+      c.get("member").id,
+      Date.now(),
+    ),
+    audit(
+      c.env,
+      c.get("session"),
+      target.company_id,
+      "early_time." + b.decision,
+      b.sessionId,
+      b.reason,
+      b,
+    ),
+  ]);
+  return c.json({ ok: true });
 });
 app.post("/api/members/:id/work-plan", async (c) => {
   roles(c, "gm", "am", "manager");
