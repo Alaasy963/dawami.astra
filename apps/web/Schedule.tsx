@@ -112,6 +112,12 @@ export default function Schedule({ me }: { me: any }) {
         {result?.data && (
           <>
             <PlanSummary record={result.data.plan} />
+            <WorkdaySummary
+              key={`${member}:${date}`}
+              member={member}
+              date={date}
+              revision={revision}
+            />
             {result.data.shiftWindow?.status === "resolved" && (
               <p>
                 {t("مدة الشفت الفعلية بتاريخ العرض بالدقائق")}:{" "}
@@ -567,5 +573,89 @@ function TemplateForm({
         <button>{t("حفظ الشفت")}</button>
       </fieldset>
     </form>
+  );
+}
+
+function WorkdaySummary({
+  member,
+  date,
+  revision,
+}: {
+  member: string;
+  date: string;
+  revision: number;
+}) {
+  const result = useLoad(
+    `/members/${member}/workday-summary?date=${date}`,
+    revision,
+  );
+  if (!result) return <p role="status">{t("عم نحسب ساعات اليوم…")}</p>;
+  if (result.error)
+    return (
+      <p className="error" role="alert">
+        {result.error}
+      </p>
+    );
+  const data = result.data;
+  if (data.status !== "ok")
+    return (
+      <p>
+        {t("ملخص الساعات متاح حالياً للأيام ذات الشفت المحدد والواضح فقط.")}
+      </p>
+    );
+  const duration = (ms: number) =>
+    `${Math.floor(ms / 3600000)}:${String(Math.floor(ms / 60000) % 60).padStart(2, "0")}`;
+  return (
+    <section aria-label={t("ملخص ساعات اليوم")}>
+      <h3>{t("ملخص ساعات اليوم")}</h3>
+      <p>{t("حساب أولي للجلسات المغلقة، وليس كشف ساعات معتمداً.")}</p>
+      <ul className="schedule-week">
+        <li>
+          {t("الوقت المحتسب قبل الاستراحة")}
+          <bdi>{duration(data.total.grossMs)}</bdi>
+        </li>
+        <li>
+          {t("الاستراحة")}
+          <bdi>{duration(data.total.breakMs)}</bdi>
+        </li>
+        <li>
+          {t("صافي الوقت المحتسب")}
+          <bdi>{duration(data.total.netMs)}</bdi>
+        </li>
+      </ul>
+      {!data.complete && (
+        <p role="status">
+          {t(
+            "الحساب غير مكتمل: اليوم لم ينتهِ أو توجد جلسات مفتوحة أو أحداث تحتاج مراجعة.",
+          )}
+        </p>
+      )}
+      {data.openCount > 0 && (
+        <p>
+          {t("جلسات مفتوحة غير محتسبة")}: {data.openCount}
+        </p>
+      )}
+      {data.pendingCount > 0 && (
+        <p>
+          {t("أحداث حضور معلقة للمراجعة في هذا الحساب")}: {data.pendingCount}
+        </p>
+      )}
+      {data.review.length > 0 && (
+        <ul>
+          {data.review.map((r: any) => (
+            <li key={r.id}>
+              {r.reason === "early_arrival" ? (
+                <>
+                  {t("وقت مبكر بانتظار مراجعة المدير")}:{" "}
+                  <bdi>{duration(r.earlyMs)}</bdi>
+                </>
+              ) : (
+                t("جلسة لا يمكن نسبتها للشفت تلقائياً؛ تحتاج مراجعة.")
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }

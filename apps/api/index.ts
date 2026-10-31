@@ -1,4 +1,5 @@
-import { shiftWindow } from "../../packages/domain/shift-window";
+import { groupWorkdaySessions } from "../../packages/domain/workday-sessions";
+import { dateOffset, shiftWindow } from "../../packages/domain/shift-window";
 import { shiftSchema, shiftSpan } from "../../packages/domain/work-time";
 import {
   workPlanSchema,
@@ -949,6 +950,100 @@ app.get("/api/members/:id/work-plan", async (c) => {
     plan: plan ? { ...plan, plan: parsed } : null,
     latestVersion: latest.version,
     shiftWindow: shift ? shiftWindow(date, shift, plan!.timezone) : null,
+  });
+});
+app.get("/api/members/:id/workday-summary", async (c) => {
+  const target = await allowedTarget(c, uuid.parse(c.req.param("id")));
+  const date = workDateSchema.parse(
+    c.req.query("date") ?? companyDate(c.get("company").timezone),
+  );
+  const load = async (day: string) => {
+    const row = await stmt(
+      c.env,
+      "SELECT * FROM work_plan_versions WHERE company_id=? AND membership_id=? AND effective_from<=? ORDER BY effective_from DESC,version DESC LIMIT 1",
+      target.company_id,
+      target.id,
+      day,
+    ).first<any>();
+    if (!row) return null;
+    const plan = workPlanSchema.parse(JSON.parse(row.plan));
+    const weekday = (new Date(day + "T12:00:00Z").getUTCDay() + 6) % 7;
+    if (plan.schedule.mode !== "fixed") return { kind: "target" as const };
+    const shift = plan.schedule.days[weekday];
+    return shift
+      ? {
+          kind: "shift" as const,
+          window: shiftWindow(day, shift, row.timezone),
+          breakPolicy: plan.breakPolicy,
+        }
+      : { kind: "off" as const };
+  };
+  const current = await load(date);
+  if (!current || current.kind !== "shift")
+    return c.json({
+      status: !current ? "no_plan" : current.kind,
+      provisional: true,
+    });
+  if (current.window.status !== "resolved")
+    return c.json({ status: "unresolved_shift", provisional: true });
+  const startAt = current.window.startAt,
+    endAt = current.window.endAt;
+  const neighbors = await Promise.all([
+    load(dateOffset(date, -1)),
+    load(dateOffset(date, 1)),
+  ]);
+  const days = [...neighbors, current].filter(
+    (d): d is Extract<NonNullable<typeof current>, { kind: "shift" }> =>
+      d?.kind === "shift",
+  );
+  const rows = (
+    await stmt(
+      c.env,
+      "SELECT id,in_at,out_at FROM attendance_logs WHERE company_id=? AND membership_id=? AND in_at<? AND (out_at IS NULL OR out_at>?) ORDER BY in_at LIMIT 501",
+      target.company_id,
+      target.id,
+      endAt,
+      startAt,
+    ).all<any>()
+  ).results;
+  if (rows.length > 500)
+    return c.json({ status: "too_many_sessions", provisional: true });
+  const long = rows.filter(
+    (r) => r.out_at !== null && r.out_at - r.in_at > 24 * 60 * 60 * 1000,
+  );
+  const result = groupWorkdaySessions(
+    rows
+      .filter((r) => !long.includes(r))
+      .map((r) => ({
+        id: r.id,
+        inAt: r.in_at,
+        outAt: r.out_at,
+        status: "accepted" as const,
+      })),
+    days,
+  );
+  const total = result.days.find((d) => d.workDate === date)!;
+  const pending = await stmt(
+    c.env,
+    "SELECT COUNT(*) AS count FROM sync_operations WHERE company_id=? AND membership_id=? AND status='review'",
+    target.company_id,
+    target.id,
+  ).first<any>();
+  return c.json({
+    status: "ok",
+    provisional: true,
+    date,
+    startAt,
+    endAt,
+    total,
+    review: [
+      ...result.review,
+      ...long.map((r) => ({ id: r.id, reason: "long_session" })),
+    ],
+    openCount: result.open.length,
+    pendingCount: pending.count,
+    complete:
+      result.complete && !long.length && !pending.count && Date.now() >= endAt,
   });
 });
 app.post("/api/members/:id/work-plan", async (c) => {

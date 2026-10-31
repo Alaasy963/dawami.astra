@@ -200,6 +200,51 @@ test("real API workflow across isolated tenants and scoped recovery", async () =
         )
         .get(me.member.id)?.n,
     ).toBe(1);
+
+    const summaryPath = `/members/${me.member.id}/workday-summary?date=${monday.toISOString().slice(0, 10)}`;
+    const noPlanSummary = (await (
+      await scheduleRequest(
+        `/members/${me.member.id}/workday-summary?date=2098-01-01`,
+      )
+    ).json()) as any;
+    expect(noPlanSummary.status).toBe("no_plan");
+    const fixtureBranch = sqlite
+      .prepare("SELECT id FROM branches WHERE company_id=? LIMIT 1")
+      .get(me.member.company_id)!;
+    const summarySession = crypto.randomUUID();
+    sqlite
+      .prepare(
+        "INSERT INTO attendance_logs(id,company_id,membership_id,branch_id,in_at,out_at,in_lat,in_lng,device_hash,work_date) VALUES(?,?,?,?,?,?,0,0,'summary-fixture',?)",
+      )
+      .run(
+        summarySession,
+        me.member.company_id,
+        me.member.id,
+        fixtureBranch.id,
+        plannedDay.shiftWindow.startAt - 15 * 60000,
+        plannedDay.shiftWindow.endAt,
+        monday.toISOString().slice(0, 10),
+      );
+    const summary = (await (await scheduleRequest(summaryPath)).json()) as any;
+    expect(summary).toMatchObject({
+      status: "ok",
+      provisional: true,
+      complete: false,
+    });
+    expect(summary.total).toMatchObject({
+      grossMs: 480 * 60000,
+      breakMs: 30 * 60000,
+      netMs: 450 * 60000,
+    });
+    expect(summary.review).toContainEqual({
+      id: summarySession,
+      reason: "early_arrival",
+      earlyMs: 15 * 60000,
+      workDate: monday.toISOString().slice(0, 10),
+    });
+    sqlite
+      .prepare("DELETE FROM attendance_logs WHERE id=?")
+      .run(summarySession);
     const foreign = sqlite
       .prepare("SELECT id FROM memberships WHERE company_id<>? LIMIT 1")
       .get(me.member.company_id)!;
@@ -245,6 +290,22 @@ test("real API workflow across isolated tenants and scoped recovery", async () =
       )
       .get(me.member.company_id, me.member.id)!;
     expect(otherLocal).toBeTruthy();
+    expect(
+      (
+        await scheduleRequest(
+          `/members/${otherLocal.id}/workday-summary?date=2099-01-01`,
+        )
+      ).status,
+    ).toBe(403);
+    expect((await scheduleRequest(summaryPath)).status).toBe(200);
+    expect(
+      (
+        await scheduleRequest(
+          `/members/${foreign.id}/workday-summary?date=2099-01-01`,
+        )
+      ).status,
+    ).toBe(404);
+
     expect(
       (await scheduleRequest(`/members/${otherLocal.id}/work-plan`)).status,
     ).toBe(403);

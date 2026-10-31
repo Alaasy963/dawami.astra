@@ -453,5 +453,17 @@
   "السبت": "Saturday",
   "الأحد": "Sunday",
   "مدة الشفت الفعلية بتاريخ العرض بالدقائق": "Actual shift duration on the selected date, in minutes",
-  "وقت الشفت مكرر أو غير موجود بسبب تغيير التوقيت. يلزم مراجعة وقته قبل حساب الساعات.": "The shift time is ambiguous or nonexistent due to a clock change. Review its time before calculating hours."
+  "وقت الشفت مكرر أو غير موجود بسبب تغيير التوقيت. يلزم مراجعة وقته قبل حساب الساعات.": "The shift time is ambiguous or nonexistent due to a clock change. Review its time before calculating hours.",
+  "عم نحسب ساعات اليوم…": "Calculating day hours…",
+  "ملخص الساعات متاح حالياً للأيام ذات الشفت المحدد والواضح فقط.": "Hours summary currently supports days with a defined, unambiguous shift only.",
+  "ملخص ساعات اليوم": "Day hours summary",
+  "حساب أولي للجلسات المغلقة، وليس كشف ساعات معتمداً.": "Provisional closed-session calculation, not an approved timesheet.",
+  "الوقت المحتسب قبل الاستراحة": "Counted time before break",
+  "الاستراحة": "Break",
+  "صافي الوقت المحتسب": "Net counted time",
+  "الحساب غير مكتمل: اليوم لم ينتهِ أو توجد جلسات مفتوحة أو أحداث تحتاج مراجعة.": "Incomplete: the day has not ended, or sessions are open or require review.",
+  "جلسات مفتوحة غير محتسبة": "Open sessions not counted",
+  "أحداث حضور معلقة للمراجعة في هذا الحساب": "Attendance events awaiting review for this account",
+  "وقت مبكر بانتظار مراجعة المدير": "Early time awaiting manager review",
+  "جلسة لا يمكن نسبتها للشفت تلقائياً؛ تحتاج مراجعة.": "This session cannot be assigned automatically; review is required."
 }
